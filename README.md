@@ -25,7 +25,8 @@ pizzahub-server/
 │   ├── controllers/
 │   │   ├── admin-users.controller.js
 │   │   ├── menu.controller.js
-│   │   └── profile.controller.js
+│   │   ├── profile.controller.js
+│   │   └── vendor-menu.controller.js
 │   ├── middleware/
 │   │   ├── auth.middleware.js
 │   │   ├── error.middleware.js
@@ -34,7 +35,8 @@ pizzahub-server/
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
 │   │   ├── menu.routes.js
-│   │   └── profile.routes.js
+│   │   ├── profile.routes.js
+│   │   └── vendor-menu.routes.js
 │   ├── services/
 │   │   ├── menu.service.js
 │   │   └── user.service.js
@@ -46,7 +48,8 @@ pizzahub-server/
 ├── tests/
 │   ├── auth.middleware.test.js
 │   ├── menu.api.test.js
-│   └── users.api.test.js
+│   ├── users.api.test.js
+│   └── vendor-menu.api.test.js
 ├── .env.example
 ├── .gitignore
 ├── package.json
@@ -125,6 +128,15 @@ Create a `.env` file in the project root based on `.env.example`:
 
 - **`GET /api/menu`** — Lists publicly approved menu items from active (non-blocked) vendors. Supports `search`, `category`, `location`, `sort` (`featured|price-asc|price-desc|newest`), `page`, and `limit` (`1..50`). Returns `{ success: true, items, locations, pagination }`.
 - **`GET /api/menu/:id`** — Returns `{ success: true, item }` for a single approved menu item (`400` on invalid ObjectId, `404` if missing, pending, rejected, inactive, or belonging to a blocked vendor).
+
+### Vendor Menu Management (Authenticated Vendor Only)
+
+- **`GET /api/vendor/menu`** — Lists all menu items owned by the authenticated vendor (`{ success: true, items, stats }`).
+- **`POST /api/vendor/menu`** — Creates a new menu item (`status: "pending"` enforced server-side, `vendorId` derived from `req.user.id`).
+- **`GET /api/vendor/menu/:id`** — Retrieves a single owned menu item (`403` if owned by another vendor).
+- **`PATCH /api/vendor/menu/:id`** — Updates editable fields (`itemName`, `category`, `description`, `price`, `location`, `images`) on an owned item; protected fields return `403`.
+- **`PATCH /api/vendor/menu/:id/status`** — Toggles an owned item between `"approved"` and `"inactive"`. Pending and rejected items cannot be self-activated; free-plan vendors are capped at 3 active items (checked against DB `subscriptionPlan` with concurrency protection).
+- **`DELETE /api/vendor/menu/:id`** — Deletes an owned menu item.
 
 ### User Profile (Authenticated, Not Blocked)
 
