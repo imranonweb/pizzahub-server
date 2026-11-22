@@ -7,7 +7,7 @@ Express.js backend API for the **PizzaHub** pizza ordering and delivery platform
 - **Runtime:** Node.js (ES Modules)
 - **Framework:** Express.js (`^5.3.0`)
 - **Validation:** Zod (`^4.6.7`)
-- **Database Driver:** MongoDB (`^7.9.1`)
+- **Database Driver:** MongoDB Native Driver (`^7.9.1`)
 - **Utilities & Security (installed):** `dotenv`, `cors`, `helmet`, `morgan`
 - **Dev Tools:** `nodemon`
 
@@ -17,6 +17,7 @@ Express.js backend API for the **PizzaHub** pizza ordering and delivery platform
 pizzahub-server/
 ├── src/
 │   ├── config/
+│   │   ├── database.js
 │   │   └── env.js
 │   ├── middleware/
 │   ├── routes/
@@ -33,11 +34,13 @@ pizzahub-server/
 
 Create a `.env` file in the project root based on `.env.example`:
 
-| Variable     | Description                  | Default                 |
-| ------------ | ---------------------------- | ----------------------- |
-| `PORT`       | Port the HTTP server listens on | `5000`               |
-| `NODE_ENV`   | Application environment mode | `development`           |
-| `CLIENT_URL` | Frontend application origin  | `http://localhost:3000` |
+| Variable      | Description                                   | Example / Default           |
+| ------------- | --------------------------------------------- | --------------------------- |
+| `PORT`        | Port the HTTP server listens on               | `5000`                      |
+| `NODE_ENV`    | Application environment mode                  | `development`               |
+| `CLIENT_URL`  | Frontend application origin                   | `http://localhost:3000`     |
+| `MONGODB_URI` | MongoDB connection string (required)          | `mongodb://127.0.0.1:27017` |
+| `DB_NAME`     | MongoDB database name (required)              | `pizzahub`                  |
 
 ## Local Setup & Scripts
 
@@ -68,6 +71,15 @@ Create a `.env` file in the project root based on `.env.example`:
   ```json
   {
     "success": true,
-    "message": "PizzaHub API is running"
+    "message": "PizzaHub API is running",
+    "database": "connected"
+  }
+  ```
+- **Response (`503 Service Unavailable`):**
+  ```json
+  {
+    "success": false,
+    "message": "Database is unavailable",
+    "database": "disconnected"
   }
   ```
