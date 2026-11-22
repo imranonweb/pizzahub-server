@@ -8,7 +8,8 @@ Express.js backend API for the **PizzaHub** pizza ordering and delivery platform
 - **Framework:** Express.js (`^5.3.0`)
 - **Validation:** Zod (`^4.6.7`)
 - **Database Driver:** MongoDB Native Driver (`^7.9.1`)
-- **Utilities & Security (installed):** `dotenv`, `cors`, `helmet`, `morgan`
+- **Security & Middleware:** `helmet` (`^8.3.0`), `cors` (`^2.8.6`), `morgan` (`^1.12.1`)
+- **Utilities:** `dotenv`
 - **Dev Tools:** `nodemon`
 
 ## Project Structure
@@ -20,6 +21,8 @@ pizzahub-server/
 │   │   ├── database.js
 │   │   └── env.js
 │   ├── middleware/
+│   │   ├── error.middleware.js
+│   │   └── not-found.middleware.js
 │   ├── routes/
 │   │   └── health.routes.js
 │   ├── app.js
