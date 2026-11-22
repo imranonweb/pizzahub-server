@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { createAuthHttpError } from '../config/jwt.js';
+import { createValidationError, formatZodIssues, isPlainObject } from '../utils/validation.js';
 
 const PROTECTED_CHECKOUT_FIELDS = new Set([
   'vendorId',
@@ -15,29 +15,6 @@ const PROTECTED_CHECKOUT_FIELDS = new Set([
   'stripeCustomerId',
   'stripeSubscriptionId',
 ]);
-
-function createValidationError(message, errors, statusCode = 400) {
-  const error = createAuthHttpError(statusCode, message);
-  if (errors && Object.keys(errors).length > 0) {
-    error.errors = errors;
-  }
-  return error;
-}
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function formatZodIssues(issues) {
-  const errors = {};
-  for (const issue of issues) {
-    const key = issue.path.length > 0 ? String(issue.path[0]) : 'body';
-    if (!errors[key]) {
-      errors[key] = issue.message;
-    }
-  }
-  return errors;
-}
 
 function validateAllowedReturnUrl(rawUrl, fieldName) {
   let parsed;

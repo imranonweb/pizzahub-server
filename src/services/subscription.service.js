@@ -4,9 +4,13 @@ import { env } from '../config/env.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import { getStripeClient } from '../config/stripe.js';
 import { FREE_PLAN_ACTIVE_ITEM_LIMIT } from '../validators/menu.validator.js';
+import { resolveEffectiveSubscriptionState as resolveSharedSubscriptionState } from '../utils/subscription-state.js';
+import {
+  OBJECT_ID_HEX_REGEX,
+  buildIdCandidates,
+  buildObjectIdOrStringFilter,
+} from '../utils/validation.js';
 import { safeNotify } from './notification.service.js';
-
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 
 const SAFE_USER_SUBSCRIPTION_PROJECTION = Object.freeze({
   _id: 1,
@@ -37,25 +41,6 @@ const SAFE_TRANSACTION_PROJECTION = Object.freeze({
   status: 1,
   createdAt: 1,
 });
-
-function buildIdCandidates(rawId) {
-  const value = String(rawId);
-  if (OBJECT_ID_HEX_REGEX.test(value)) {
-    return [new ObjectId(value), value];
-  }
-  return [value];
-}
-
-function buildObjectIdOrStringFilter(rawId) {
-  if (OBJECT_ID_HEX_REGEX.test(rawId)) {
-    return {
-      $or: [{ _id: new ObjectId(rawId) }, { _id: rawId }, { id: rawId }],
-    };
-  }
-  return {
-    $or: [{ _id: rawId }, { id: rawId }],
-  };
-}
 
 function toIsoOrNull(value) {
   if (!value) return null;
@@ -110,31 +95,9 @@ function isStandaloneTransactionError(error) {
 }
 
 export function resolveEffectiveSubscriptionState(userDoc) {
-  const storedPlan = userDoc?.subscriptionPlan === 'premium' ? 'premium' : 'free';
-  const expiresAtIso = toIsoOrNull(userDoc?.subscriptionExpiresAt);
-  const expiresAtMs = expiresAtIso ? new Date(expiresAtIso).getTime() : null;
-  const isExpired =
-    (storedPlan === 'premium' && expiresAtMs !== null && expiresAtMs <= Date.now()) ||
-    userDoc?.subscriptionStatus === 'expired';
-  const effectivePlan = storedPlan === 'premium' && !isExpired ? 'premium' : 'free';
-
-  let status = typeof userDoc?.subscriptionStatus === 'string' ? userDoc.subscriptionStatus : '';
-  if (!status) {
-    status = effectivePlan === 'premium' ? 'active' : isExpired ? 'expired' : 'free';
-  } else if (isExpired) {
-    status = 'expired';
-  }
-
-  return {
-    plan: effectivePlan,
-    storedPlan,
-    status,
-    cancelAtPeriodEnd: userDoc?.cancelAtPeriodEnd === true && !isExpired,
-    subscriptionExpiresAt: expiresAtIso,
-    isExpired,
-    hasBillingCustomer: Boolean(userDoc?.stripeCustomerId),
-    activeItemLimit: effectivePlan === 'premium' ? null : FREE_PLAN_ACTIVE_ITEM_LIMIT,
-  };
+  return resolveSharedSubscriptionState(userDoc, {
+    freePlanActiveItemLimit: FREE_PLAN_ACTIVE_ITEM_LIMIT,
+  });
 }
 
 export function getAvailableSubscriptionPlans() {
@@ -281,8 +244,13 @@ export async function createVendorCheckoutSession(
   vendorDoc = await reconcileExpiredVendorSubscription(vendorDoc, db);
   const currentState = resolveEffectiveSubscriptionState(vendorDoc);
 
-  if (currentState.plan === 'premium' && !currentState.cancelAtPeriodEnd) {
-    throw createAuthHttpError(409, 'You already have an active Premium subscription.');
+  if (currentState.plan === 'premium') {
+    throw createAuthHttpError(
+      409,
+      currentState.cancelAtPeriodEnd
+        ? 'Your Premium subscription is active until the end of the billing period. Manage or resume it from the Billing Portal.'
+        : 'You already have an active Premium subscription.',
+    );
   }
 
   const stripe = stripeClient ?? getStripeClient();
@@ -531,6 +499,15 @@ export async function processStripeWebhookEvent(event, { db = getDB() } = {}) {
   let notification = null;
 
   if (event.type === 'checkout.session.completed') {
+    if (typeof eventObject.mode === 'string' && eventObject.mode !== 'subscription') {
+      return {
+        received: true,
+        ignored: true,
+        eventId: event.id,
+        reason: 'Non-subscription checkout session',
+      };
+    }
+
     const isPaid =
       eventObject.payment_status === 'paid' ||
       eventObject.payment_status === 'no_payment_required';

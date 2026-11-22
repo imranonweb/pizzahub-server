@@ -1,8 +1,7 @@
-import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
+import { buildObjectIdOrStringFilter, escapeRegex } from '../utils/validation.js';
 
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 const VALID_ROLES = new Set(['customer', 'vendor', 'admin']);
 
 export const SAFE_USER_PROJECTION = Object.freeze({
@@ -22,22 +21,6 @@ export const SAFE_USER_PROJECTION = Object.freeze({
   createdAt: 1,
   updatedAt: 1,
 });
-
-function buildUserIdFilter(userId) {
-  if (OBJECT_ID_HEX_REGEX.test(userId)) {
-    return {
-      $or: [{ _id: new ObjectId(userId) }, { _id: userId }, { id: userId }],
-    };
-  }
-
-  return {
-    $or: [{ _id: userId }, { id: userId }],
-  };
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function toIsoStringOrNull(value) {
   if (!value) {
@@ -74,7 +57,7 @@ export function serializeUser(doc) {
 export async function getCurrentUserProfile(userId, db = getDB()) {
   const userDoc = await db
     .collection('users')
-    .findOne(buildUserIdFilter(userId), { projection: SAFE_USER_PROJECTION });
+    .findOne(buildObjectIdOrStringFilter(userId), { projection: SAFE_USER_PROJECTION });
 
   if (!userDoc) {
     throw createAuthHttpError(404, 'User profile not found.');
@@ -111,7 +94,7 @@ export async function updateCurrentUserProfile({ userId, actorRole, updates }, d
   const updatedDoc = await db
     .collection('users')
     .findOneAndUpdate(
-      buildUserIdFilter(userId),
+      buildObjectIdOrStringFilter(userId),
       { $set: safeSet },
       { returnDocument: 'after', projection: SAFE_USER_PROJECTION },
     );
@@ -185,7 +168,7 @@ export async function listAdminUsers({ search, role, status, page, limit }, db =
 export async function getAdminUserById(targetUserId, db = getDB()) {
   const userDoc = await db
     .collection('users')
-    .findOne(buildUserIdFilter(targetUserId), { projection: SAFE_USER_PROJECTION });
+    .findOne(buildObjectIdOrStringFilter(targetUserId), { projection: SAFE_USER_PROJECTION });
 
   if (!userDoc) {
     throw createAuthHttpError(404, 'User not found.');
@@ -202,7 +185,7 @@ export async function setAdminUserBlockStatus({ actorId, targetUserId, isBlocked
   const updatedDoc = await db
     .collection('users')
     .findOneAndUpdate(
-      buildUserIdFilter(targetUserId),
+      buildObjectIdOrStringFilter(targetUserId),
       { $set: { isBlocked, updatedAt: new Date() } },
       { returnDocument: 'after', projection: SAFE_USER_PROJECTION },
     );

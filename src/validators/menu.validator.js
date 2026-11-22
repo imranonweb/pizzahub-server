@@ -1,7 +1,12 @@
 import { z } from 'zod';
-import { createAuthHttpError } from '../config/jwt.js';
-
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
+import {
+  MAX_PAGINATION_PAGE,
+  OBJECT_ID_HEX_REGEX,
+  createValidationError,
+  formatZodIssues,
+  isPlainObject,
+  parsePositiveIntQueryParam,
+} from '../utils/validation.js';
 
 export const MENU_CATEGORIES = Object.freeze([
   'Classic Pizzas',
@@ -64,29 +69,6 @@ const PROTECTED_MENU_FIELDS = new Set([
   'createdAt',
   'updatedAt',
 ]);
-
-function createValidationError(message, errors, statusCode = 400) {
-  const error = createAuthHttpError(statusCode, message);
-  if (errors && Object.keys(errors).length > 0) {
-    error.errors = errors;
-  }
-  return error;
-}
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function formatZodIssues(issues) {
-  const errors = {};
-  for (const issue of issues) {
-    const key = issue.path.length > 0 ? String(issue.path[0]) : 'body';
-    if (!errors[key]) {
-      errors[key] = issue.message;
-    }
-  }
-  return errors;
-}
 
 function isValidMenuImageUrl(rawValue) {
   const trimmed = rawValue.trim();
@@ -275,29 +257,19 @@ export function validatePublicMenuQuery(query = {}) {
     );
   }
 
-  const pageRaw = query.page;
-  let page = 1;
-  if (pageRaw !== undefined && pageRaw !== '') {
-    const parsedPage = Number(pageRaw);
-    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
-      throw createValidationError('Page must be a positive integer.', {
-        page: 'Page must be a positive integer.',
-      });
-    }
-    page = parsedPage;
-  }
+  const page = parsePositiveIntQueryParam(query.page, {
+    fieldName: 'Page',
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGINATION_PAGE,
+  });
 
-  const limitRaw = query.limit ?? query.pageSize;
-  let limit = 12;
-  if (limitRaw !== undefined && limitRaw !== '') {
-    const parsedLimit = Number(limitRaw);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 50) {
-      throw createValidationError('Limit must be an integer between 1 and 50.', {
-        limit: 'Limit must be an integer between 1 and 50.',
-      });
-    }
-    limit = parsedLimit;
-  }
+  const limit = parsePositiveIntQueryParam(query.limit ?? query.pageSize, {
+    fieldName: 'Limit',
+    defaultValue: 12,
+    min: 1,
+    max: 50,
+  });
 
   return {
     search,
@@ -367,29 +339,19 @@ export function validateVendorMenuListQuery(query = {}) {
     );
   }
 
-  const pageRaw = query.page;
-  let page = 1;
-  if (pageRaw !== undefined && pageRaw !== '') {
-    const parsedPage = Number(pageRaw);
-    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
-      throw createValidationError('Page must be a positive integer.', {
-        page: 'Page must be a positive integer.',
-      });
-    }
-    page = parsedPage;
-  }
+  const page = parsePositiveIntQueryParam(query.page, {
+    fieldName: 'Page',
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGINATION_PAGE,
+  });
 
-  const limitRaw = query.limit ?? query.pageSize;
-  let limit = 50;
-  if (limitRaw !== undefined && limitRaw !== '') {
-    const parsedLimit = Number(limitRaw);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      throw createValidationError('Limit must be an integer between 1 and 100.', {
-        limit: 'Limit must be an integer between 1 and 100.',
-      });
-    }
-    limit = parsedLimit;
-  }
+  const limit = parsePositiveIntQueryParam(query.limit ?? query.pageSize, {
+    fieldName: 'Limit',
+    defaultValue: 50,
+    min: 1,
+    max: 100,
+  });
 
   return {
     search,
@@ -538,29 +500,19 @@ export function validateAdminMenuListQuery(query = {}) {
     );
   }
 
-  const pageRaw = query.page;
-  let page = 1;
-  if (pageRaw !== undefined && pageRaw !== '') {
-    const parsedPage = Number(pageRaw);
-    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
-      throw createValidationError('Page must be a positive integer.', {
-        page: 'Page must be a positive integer.',
-      });
-    }
-    page = parsedPage;
-  }
+  const page = parsePositiveIntQueryParam(query.page, {
+    fieldName: 'Page',
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGINATION_PAGE,
+  });
 
-  const limitRaw = query.limit ?? query.pageSize;
-  let limit = 50;
-  if (limitRaw !== undefined && limitRaw !== '') {
-    const parsedLimit = Number(limitRaw);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      throw createValidationError('Limit must be an integer between 1 and 100.', {
-        limit: 'Limit must be an integer between 1 and 100.',
-      });
-    }
-    limit = parsedLimit;
-  }
+  const limit = parsePositiveIntQueryParam(query.limit ?? query.pageSize, {
+    fieldName: 'Limit',
+    defaultValue: 50,
+    min: 1,
+    max: 100,
+  });
 
   return {
     search,

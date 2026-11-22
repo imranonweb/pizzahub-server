@@ -7,9 +7,15 @@ import {
   MENU_SORT_OPTIONS,
   VENDOR_MENU_SORT_OPTIONS,
 } from '../validators/menu.validator.js';
+import { resolveEffectiveSubscriptionPlan } from '../utils/subscription-state.js';
+import {
+  OBJECT_ID_HEX_REGEX,
+  buildIdCandidates,
+  buildObjectIdOrStringFilter,
+  escapeRegex,
+} from '../utils/validation.js';
 import { safeNotify } from './notification.service.js';
 
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 const VALID_MENU_STATUSES = new Set(['pending', 'approved', 'rejected', 'inactive']);
 
 export const SAFE_PUBLIC_MENU_PROJECTION = Object.freeze({
@@ -68,6 +74,7 @@ export const SAFE_PUBLIC_VENDOR_PROJECTION = Object.freeze({
   name: 1,
   businessName: 1,
   subscriptionPlan: 1,
+  subscriptionStatus: 1,
   subscriptionExpiresAt: 1,
   isBlocked: 1,
 });
@@ -79,6 +86,7 @@ export const SAFE_ADMIN_VENDOR_PROJECTION = Object.freeze({
   email: 1,
   businessName: 1,
   subscriptionPlan: 1,
+  subscriptionStatus: 1,
   subscriptionExpiresAt: 1,
 });
 
@@ -103,30 +111,6 @@ async function withVendorActivationLock(vendorId, task) {
       vendorActivationQueues.delete(key);
     }
   }
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function buildObjectIdOrStringFilter(rawId) {
-  if (OBJECT_ID_HEX_REGEX.test(rawId)) {
-    return {
-      $or: [{ _id: new ObjectId(rawId) }, { _id: rawId }, { id: rawId }],
-    };
-  }
-
-  return {
-    $or: [{ _id: rawId }, { id: rawId }],
-  };
-}
-
-function buildVendorIdCandidates(vendorId) {
-  const raw = String(vendorId);
-  if (OBJECT_ID_HEX_REGEX.test(raw)) {
-    return [new ObjectId(raw), raw];
-  }
-  return [raw];
 }
 
 function toIsoString(value) {
@@ -156,23 +140,6 @@ function normalizeImages(rawImages) {
           : [],
     ),
   );
-}
-
-function resolveEffectiveSubscriptionPlan(vendorDoc) {
-  if (vendorDoc?.subscriptionPlan !== 'premium') {
-    return 'free';
-  }
-  if (!vendorDoc.subscriptionExpiresAt) {
-    return 'premium';
-  }
-  const expiresAt =
-    vendorDoc.subscriptionExpiresAt instanceof Date
-      ? vendorDoc.subscriptionExpiresAt
-      : new Date(vendorDoc.subscriptionExpiresAt);
-  if (Number.isNaN(expiresAt.getTime())) {
-    return 'premium';
-  }
-  return expiresAt.getTime() > Date.now() ? 'premium' : 'free';
 }
 
 function serializePublicVendor(vendorDoc, fallbackVendorId) {
@@ -425,7 +392,7 @@ export async function getPublicMenuItemById(itemId, db = getDB()) {
 }
 
 async function getOwnedMenuItemOrThrow(itemId, vendorId, db) {
-  const vendorCandidates = buildVendorIdCandidates(vendorId);
+  const vendorCandidates = buildIdCandidates(vendorId);
   const doc = await db.collection('menuItems').findOne(
     {
       $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
@@ -464,7 +431,7 @@ export async function listVendorMenuItems(
   { search = '', category = '', status = 'all', sort = VENDOR_MENU_SORT_OPTIONS.NEWEST, page = 1, limit = 50 } = {},
   db = getDB(),
 ) {
-  const vendorCandidates = buildVendorIdCandidates(vendorId);
+  const vendorCandidates = buildIdCandidates(vendorId);
   const docs = await db
     .collection('menuItems')
     .find({ vendorId: { $in: vendorCandidates } }, { projection: SAFE_VENDOR_MENU_PROJECTION })
@@ -562,7 +529,7 @@ export async function updateVendorMenuItem({ itemId, vendorId, updates }, db = g
     updateOperation.$unset = { rejectionReason: '' };
   }
 
-  const vendorCandidates = buildVendorIdCandidates(vendorId);
+  const vendorCandidates = buildIdCandidates(vendorId);
   const updatedDoc = await db.collection('menuItems').findOneAndUpdate(
     {
       $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
@@ -584,7 +551,7 @@ export async function updateVendorMenuItemStatus(
 ) {
   return withVendorActivationLock(vendorId, async () => {
     const existing = await getOwnedMenuItemOrThrow(itemId, vendorId, db);
-    const vendorCandidates = buildVendorIdCandidates(vendorId);
+    const vendorCandidates = buildIdCandidates(vendorId);
 
     if (existing.status === 'pending') {
       throw createAuthHttpError(
@@ -610,13 +577,13 @@ export async function updateVendorMenuItemStatus(
       const vendorDoc = await db
         .collection('users')
         .findOne(buildObjectIdOrStringFilter(vendorId), {
-          projection: { subscriptionPlan: 1, subscriptionExpiresAt: 1 },
+          projection: { subscriptionPlan: 1, subscriptionStatus: 1, subscriptionExpiresAt: 1 },
         });
 
       const effectivePlan = resolveEffectiveSubscriptionPlan(vendorDoc);
       if (effectivePlan === 'free') {
         const activeCount = await db.collection('menuItems').countDocuments({
-          vendorId: { $in: vendorCandidates },
+          vendorId: { $in: buildIdCandidates(vendorId) },
           status: 'approved',
         });
 
@@ -652,7 +619,7 @@ export async function updateVendorMenuItemStatus(
 export async function deleteVendorMenuItem({ itemId, vendorId }, db = getDB()) {
   await getOwnedMenuItemOrThrow(itemId, vendorId, db);
 
-  const itemIdCandidates = buildVendorIdCandidates(itemId);
+  const itemIdCandidates = buildIdCandidates(itemId);
   const linkedOrdersCount = await db.collection('orders').countDocuments({
     $or: [
       { itemId: { $in: itemIdCandidates } },
@@ -667,7 +634,7 @@ export async function deleteVendorMenuItem({ itemId, vendorId }, db = getDB()) {
     );
   }
 
-  const vendorCandidates = buildVendorIdCandidates(vendorId);
+  const vendorCandidates = buildIdCandidates(vendorId);
   const result = await db.collection('menuItems').deleteOne({
     $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
   });
@@ -913,12 +880,21 @@ export async function moderateAdminMenuItem(
       const vendorDoc = await db
         .collection('users')
         .findOne(buildObjectIdOrStringFilter(vendorKey), {
-          projection: { subscriptionPlan: 1, subscriptionExpiresAt: 1 },
+          projection: {
+            subscriptionPlan: 1,
+            subscriptionStatus: 1,
+            subscriptionExpiresAt: 1,
+            isBlocked: 1,
+          },
         });
+
+      if (vendorDoc?.isBlocked === true) {
+        throw createAuthHttpError(409, 'Cannot approve menu items for a blocked vendor account.');
+      }
 
       const effectivePlan = resolveEffectiveSubscriptionPlan(vendorDoc);
       if (effectivePlan === 'free') {
-        const vendorCandidates = buildVendorIdCandidates(vendorKey);
+        const vendorCandidates = buildIdCandidates(vendorKey);
         const activeCount = await db.collection('menuItems').countDocuments({
           vendorId: { $in: vendorCandidates },
           status: 'approved',
@@ -1037,7 +1013,7 @@ export async function deleteAdminMenuItem(itemId, db = getDB()) {
     throw createAuthHttpError(404, 'Menu item not found.');
   }
 
-  const itemIdCandidates = buildVendorIdCandidates(itemId);
+  const itemIdCandidates = buildIdCandidates(itemId);
   const linkedOrdersCount = await db.collection('orders').countDocuments({
     $or: [
       { itemId: { $in: itemIdCandidates } },

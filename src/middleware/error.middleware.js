@@ -3,7 +3,8 @@ import { env } from '../config/env.js';
 function sanitizeSensitiveText(text) {
   return String(text)
     .replace(/(mongodb(?:\+srv)?:\/\/)([^@\s]+@)/gi, '$1***:***@')
-    .replace(/(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, '$1[REDACTED]');
+    .replace(/(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, '$1[REDACTED]')
+    .replace(/\b([sr]k_(?:test|live)_[A-Za-z0-9]+|whsec_[A-Za-z0-9]+)\b/g, '[REDACTED_STRIPE_SECRET]');
 }
 
 export function errorMiddleware(err, req, res, next) {

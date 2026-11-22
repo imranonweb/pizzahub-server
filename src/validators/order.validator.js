@@ -1,7 +1,13 @@
 import { z } from 'zod';
-import { createAuthHttpError } from '../config/jwt.js';
+import {
+  MAX_PAGINATION_PAGE,
+  OBJECT_ID_HEX_REGEX,
+  createValidationError,
+  formatZodIssues,
+  isPlainObject,
+  parsePositiveIntQueryParam,
+} from '../utils/validation.js';
 
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 const PHONE_REGEX = /^[+\d().\-\s]{7,20}$/;
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -59,29 +65,6 @@ const PROTECTED_ORDER_ITEM_FIELDS = new Set([
   'itemName',
   'status',
 ]);
-
-function createValidationError(message, errors, statusCode = 400) {
-  const error = createAuthHttpError(statusCode, message);
-  if (errors && Object.keys(errors).length > 0) {
-    error.errors = errors;
-  }
-  return error;
-}
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function formatZodIssues(issues) {
-  const errors = {};
-  for (const issue of issues) {
-    const key = issue.path.length > 0 ? String(issue.path[0]) : 'body';
-    if (!errors[key]) {
-      errors[key] = issue.message;
-    }
-  }
-  return errors;
-}
 
 const orderItemInputSchema = z
   .object({
@@ -339,29 +322,19 @@ export function validateOrderListQuery(query = {}) {
     );
   }
 
-  const pageRaw = query.page;
-  let page = 1;
-  if (pageRaw !== undefined && pageRaw !== '') {
-    const parsedPage = Number(pageRaw);
-    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
-      throw createValidationError('Page must be a positive integer.', {
-        page: 'Page must be a positive integer.',
-      });
-    }
-    page = parsedPage;
-  }
+  const page = parsePositiveIntQueryParam(query.page, {
+    fieldName: 'Page',
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGINATION_PAGE,
+  });
 
-  const limitRaw = query.limit ?? query.pageSize;
-  let limit = 20;
-  if (limitRaw !== undefined && limitRaw !== '') {
-    const parsedLimit = Number(limitRaw);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      throw createValidationError('Limit must be an integer between 1 and 100.', {
-        limit: 'Limit must be an integer between 1 and 100.',
-      });
-    }
-    limit = parsedLimit;
-  }
+  const limit = parsePositiveIntQueryParam(query.limit ?? query.pageSize, {
+    fieldName: 'Limit',
+    defaultValue: 20,
+    min: 1,
+    max: 100,
+  });
 
   return { search, status, sort, page, limit };
 }

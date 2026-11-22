@@ -87,6 +87,7 @@ Create a `.env` file in the project root based on `.env.example`:
 | ---------------------- | ---------------------------------------------------------- | --------------------------------------- |
 | `PORT`                 | Port the HTTP server listens on                            | `5000`                                  |
 | `NODE_ENV`             | Application environment mode                               | `development`                           |
+| `TRUST_PROXY`          | Express `trust proxy` hops (`1` behind reverse proxy/PaaS) | `false` (dev), `1` (prod default)       |
 | `CLIENT_URL`           | Frontend application origin (required in production)       | `http://localhost:3000`                 |
 | `MONGODB_URI`          | MongoDB connection string (required)                       | `mongodb://127.0.0.1:27017`             |
 | `DB_NAME`              | MongoDB database name (required)                           | `pizzahub`                              |
@@ -199,9 +200,17 @@ Create a `.env` file in the project root based on `.env.example`:
    - `invoice.payment_failed`
 3. **Local Testing with Stripe CLI:**
    ```bash
-   stripe listen --forward-to http://localhost:5000/api/webhooks/stripe
+   stripe listen --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,invoice.paid,invoice.payment_succeeded,invoice.payment_failed --forward-to http://localhost:5000/api/webhooks/stripe
    ```
    Copy the generated `whsec_...` secret into `.env` as `STRIPE_WEBHOOK_SECRET`, then trigger test events with `stripe trigger checkout.session.completed` or complete a test Checkout Session.
+
+## Production Deployment Checklist
+
+- Set `NODE_ENV=production` and `CLIENT_URL` to your exact frontend HTTPS origin(s) (comma-separated, no wildcard `*`).
+- Set `BETTER_AUTH_URL` / `BETTER_AUTH_JWKS_URL` / `JWT_ISSUER` / `JWT_AUDIENCE` to match your deployed Next.js Better Auth service.
+- Use a MongoDB replica set / Atlas cluster (`mongodb+srv://...`) so multi-vendor order creation and webhook updates execute inside ACID transactions.
+- Keep `TRUST_PROXY=1` (production default) when deployed behind a single reverse proxy (Render, Railway, Nginx, Cloudflare) so rate limiting and logs use the real client IP.
+- Configure your Stripe live/production webhook endpoint at `https://<your-api-domain>/api/webhooks/stripe` and set production `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`.
 
 ### Notifications (Authenticated Users)
 

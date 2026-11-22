@@ -72,6 +72,14 @@ function registerShutdownHandlers() {
   process.once('SIGTERM', () => {
     void gracefulShutdown('SIGTERM');
   });
+  process.on('unhandledRejection', (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason ?? 'Unknown rejection');
+    console.error('Unhandled promise rejection:', message);
+  });
+  process.once('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error?.message || 'Fatal server error');
+    void gracefulShutdown('uncaughtException');
+  });
 }
 
 function startHttpServer() {

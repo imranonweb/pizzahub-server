@@ -1,6 +1,7 @@
-import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError, extractBearerToken, verifyAccessToken } from '../config/jwt.js';
+import { resolveEffectiveSubscriptionPlan } from '../utils/subscription-state.js';
+import { buildObjectIdOrStringFilter } from '../utils/validation.js';
 
 export const USER_ROLES = Object.freeze({
   CUSTOMER: 'customer',
@@ -9,7 +10,6 @@ export const USER_ROLES = Object.freeze({
 });
 
 const VALID_ROLES = new Set(Object.values(USER_ROLES));
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 
 const USER_AUTH_PROJECTION = Object.freeze({
   _id: 1,
@@ -21,20 +21,9 @@ const USER_AUTH_PROJECTION = Object.freeze({
   isBlocked: 1,
   businessName: 1,
   subscriptionPlan: 1,
+  subscriptionStatus: 1,
   subscriptionExpiresAt: 1,
 });
-
-function buildUserIdFilter(userId) {
-  if (OBJECT_ID_HEX_REGEX.test(userId)) {
-    return {
-      $or: [{ _id: new ObjectId(userId) }, { _id: userId }, { id: userId }],
-    };
-  }
-
-  return {
-    $or: [{ _id: userId }, { id: userId }],
-  };
-}
 
 function toSafeUser(userDoc) {
   const normalizedRole =
@@ -52,7 +41,7 @@ function toSafeUser(userDoc) {
     role: normalizedRole,
     isBlocked: userDoc.isBlocked === true,
     businessName: typeof userDoc.businessName === 'string' ? userDoc.businessName : '',
-    subscriptionPlan: userDoc.subscriptionPlan === 'premium' ? 'premium' : 'free',
+    subscriptionPlan: resolveEffectiveSubscriptionPlan(userDoc),
     subscriptionExpiresAt: userDoc.subscriptionExpiresAt ?? null,
   };
 }
@@ -71,7 +60,9 @@ export function createAuthMiddleware(options = {}) {
         const db = getDatabase();
         userDoc = await db
           .collection('users')
-          .findOne(buildUserIdFilter(verifiedToken.sub), { projection: USER_AUTH_PROJECTION });
+          .findOne(buildObjectIdOrStringFilter(verifiedToken.sub), {
+            projection: USER_AUTH_PROJECTION,
+          });
       } catch (dbError) {
         throw createAuthHttpError(503, 'Authentication service is temporarily unavailable', {
           cause: dbError,

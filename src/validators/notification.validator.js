@@ -1,7 +1,10 @@
 import { z } from 'zod';
-import { createAuthHttpError } from '../config/jwt.js';
-
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
+import {
+  MAX_PAGINATION_PAGE,
+  OBJECT_ID_HEX_REGEX,
+  createValidationError,
+  parsePositiveIntQueryParam,
+} from '../utils/validation.js';
 
 export const NOTIFICATION_TYPES = Object.freeze([
   'order_placed',
@@ -18,14 +21,6 @@ export const NOTIFICATION_TYPES = Object.freeze([
 ]);
 
 const ALLOWED_NOTIFICATION_TYPES = new Set(['all', ...NOTIFICATION_TYPES]);
-
-function createValidationError(message, errors, statusCode = 400) {
-  const error = createAuthHttpError(statusCode, message);
-  if (errors && Object.keys(errors).length > 0) {
-    error.errors = errors;
-  }
-  return error;
-}
 
 export function validateNotificationIdParam(rawId) {
   if (typeof rawId !== 'string' || !OBJECT_ID_HEX_REGEX.test(rawId.trim())) {
@@ -64,29 +59,19 @@ export function validateNotificationListQuery(query = {}) {
     });
   }
 
-  const pageRaw = query.page;
-  let page = 1;
-  if (pageRaw !== undefined && pageRaw !== '') {
-    const parsedPage = Number(pageRaw);
-    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
-      throw createValidationError('Page must be a positive integer.', {
-        page: 'Page must be a positive integer.',
-      });
-    }
-    page = parsedPage;
-  }
+  const page = parsePositiveIntQueryParam(query.page, {
+    fieldName: 'Page',
+    defaultValue: 1,
+    min: 1,
+    max: MAX_PAGINATION_PAGE,
+  });
 
-  const limitRaw = query.limit ?? query.pageSize;
-  let limit = 20;
-  if (limitRaw !== undefined && limitRaw !== '') {
-    const parsedLimit = Number(limitRaw);
-    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      throw createValidationError('Limit must be an integer between 1 and 100.', {
-        limit: 'Limit must be an integer between 1 and 100.',
-      });
-    }
-    limit = parsedLimit;
-  }
+  const limit = parsePositiveIntQueryParam(query.limit ?? query.pageSize, {
+    fieldName: 'Limit',
+    defaultValue: 20,
+    min: 1,
+    max: 100,
+  });
 
   return { unreadOnly, type, page, limit };
 }

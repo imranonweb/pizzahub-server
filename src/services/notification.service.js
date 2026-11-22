@@ -1,8 +1,11 @@
 import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
-
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
+import {
+  OBJECT_ID_HEX_REGEX,
+  buildIdCandidates,
+  buildObjectIdOrStringFilter,
+} from '../utils/validation.js';
 
 export const SAFE_NOTIFICATION_PROJECTION = Object.freeze({
   _id: 1,
@@ -19,25 +22,6 @@ export const SAFE_NOTIFICATION_PROJECTION = Object.freeze({
   createdAt: 1,
   readAt: 1,
 });
-
-function buildIdCandidates(rawId) {
-  const value = String(rawId);
-  if (OBJECT_ID_HEX_REGEX.test(value)) {
-    return [new ObjectId(value), value];
-  }
-  return [value];
-}
-
-function buildObjectIdOrStringFilter(rawId) {
-  if (OBJECT_ID_HEX_REGEX.test(rawId)) {
-    return {
-      $or: [{ _id: new ObjectId(rawId) }, { _id: rawId }, { id: rawId }],
-    };
-  }
-  return {
-    $or: [{ _id: rawId }, { id: rawId }],
-  };
-}
 
 function toIsoString(value) {
   if (!value) {

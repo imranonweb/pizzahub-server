@@ -2,9 +2,12 @@ import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import { ORDER_LIST_SORT_OPTIONS } from '../validators/order.validator.js';
+import {
+  OBJECT_ID_HEX_REGEX,
+  buildIdCandidates,
+  buildObjectIdOrStringFilter,
+} from '../utils/validation.js';
 import { safeNotify } from './notification.service.js';
-
-const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 
 const ACTIVE_ORDER_STATUSES = new Set([
   'pending',
@@ -78,25 +81,6 @@ const SAFE_ORDER_CUSTOMER_PROJECTION = Object.freeze({
 
 function roundMoney(value) {
   return Math.round(value * 100) / 100;
-}
-
-function buildIdCandidates(rawId) {
-  const value = String(rawId);
-  if (OBJECT_ID_HEX_REGEX.test(value)) {
-    return [new ObjectId(value), value];
-  }
-  return [value];
-}
-
-function buildObjectIdOrStringFilter(rawId) {
-  if (OBJECT_ID_HEX_REGEX.test(rawId)) {
-    return {
-      $or: [{ _id: new ObjectId(rawId) }, { _id: rawId }, { id: rawId }],
-    };
-  }
-  return {
-    $or: [{ _id: rawId }, { id: rawId }],
-  };
 }
 
 function toIsoString(value) {

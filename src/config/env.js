@@ -25,10 +25,22 @@ const rawStripePriceCents = process.env.STRIPE_PREMIUM_PRICE_CENTS?.trim();
 const parsedStripePriceCents = rawStripePriceCents ? Number(rawStripePriceCents) : 2900;
 const stripeCurrency = (process.env.STRIPE_CURRENCY?.trim() || 'usd').toLowerCase();
 
+function parseTrustProxy(rawValue, fallback) {
+  if (rawValue === undefined || rawValue === '') {
+    return fallback;
+  }
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  const asNum = Number(normalized);
+  return Number.isInteger(asNum) && asNum >= 0 ? asNum : rawValue.trim();
+}
+
 export const env = {
   port: Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : 5000,
   nodeEnv,
   isProduction,
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY, isProduction ? 1 : false),
   clientUrl: allowedOrigins[0] || '',
   allowedOrigins,
   mongodbUri: process.env.MONGODB_URI?.trim() || '',

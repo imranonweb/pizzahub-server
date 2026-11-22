@@ -64,6 +64,10 @@ export async function connectDB() {
 export async function ensureUserIndexes(database) {
   const usersCollection = database.collection('users');
   await Promise.all([
+    usersCollection.createIndex({ id: 1 }, { sparse: true }),
+    usersCollection.createIndex({ stripeCustomerId: 1 }, { sparse: true }),
+    usersCollection.createIndex({ stripeSubscriptionId: 1 }, { sparse: true }),
+    usersCollection.createIndex({ isBlocked: 1 }),
     usersCollection.createIndex({ role: 1, isBlocked: 1, createdAt: -1 }),
     usersCollection.createIndex({ createdAt: -1 }),
     usersCollection.createIndex({ name: 1 }),
@@ -100,6 +104,7 @@ export async function ensureTransactionIndexes(database) {
 export async function ensureNotificationIndexes(database) {
   const notificationsCollection = database.collection('notifications');
   await Promise.all([
+    notificationsCollection.createIndex({ userId: 1, createdAt: -1 }),
     notificationsCollection.createIndex({ userId: 1, read: 1, createdAt: -1 }),
     notificationsCollection.createIndex(
       { userId: 1, eventKey: 1 },
