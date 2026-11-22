@@ -10,6 +10,17 @@ const allowedOrigins = rawClientUrl
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
+const betterAuthUrl =
+  process.env.BETTER_AUTH_URL?.trim().replace(/\/+$/, '') ||
+  (isProduction ? '' : allowedOrigins[0] || 'http://localhost:3000');
+
+const betterAuthJwksUrl =
+  process.env.BETTER_AUTH_JWKS_URL?.trim() ||
+  (betterAuthUrl ? `${betterAuthUrl}/api/auth/jwks` : '');
+
+const jwtIssuer = process.env.JWT_ISSUER?.trim().replace(/\/+$/, '') || betterAuthUrl;
+const jwtAudience = process.env.JWT_AUDIENCE?.trim().replace(/\/+$/, '') || betterAuthUrl;
+
 export const env = {
   port: Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : 5000,
   nodeEnv,
@@ -18,7 +29,24 @@ export const env = {
   allowedOrigins,
   mongodbUri: process.env.MONGODB_URI?.trim() || '',
   dbName: process.env.DB_NAME?.trim() || '',
+  betterAuthUrl,
+  betterAuthJwksUrl,
+  jwtIssuer,
+  jwtAudience,
 };
+
+function assertValidHttpUrl(value, variableName) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${variableName}: must be a valid http:// or https:// URL`);
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Invalid ${variableName}: must use http:// or https:// protocol`);
+  }
+}
 
 export function validateEnv() {
   const missing = [];
@@ -33,6 +61,10 @@ export function validateEnv() {
 
   if (env.isProduction && env.allowedOrigins.length === 0) {
     missing.push('CLIENT_URL');
+  }
+
+  if (env.isProduction && (!env.betterAuthJwksUrl || !env.jwtIssuer || !env.jwtAudience)) {
+    missing.push('BETTER_AUTH_URL');
   }
 
   if (missing.length > 0) {
@@ -52,15 +84,16 @@ export function validateEnv() {
       );
     }
 
-    let parsed;
-    try {
-      parsed = new URL(origin);
-    } catch {
-      throw new Error('Invalid CLIENT_URL: must contain valid http:// or https:// origin(s)');
-    }
+    assertValidHttpUrl(origin, 'CLIENT_URL');
+  }
 
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('Invalid CLIENT_URL: must use http:// or https:// protocol');
-    }
+  assertValidHttpUrl(env.betterAuthJwksUrl, 'BETTER_AUTH_JWKS_URL');
+
+  if (!env.jwtIssuer) {
+    throw new Error('Missing required environment variables: JWT_ISSUER');
+  }
+
+  if (!env.jwtAudience) {
+    throw new Error('Missing required environment variables: JWT_AUDIENCE');
   }
 }

@@ -26,8 +26,13 @@ export function errorMiddleware(err, req, res, next) {
       statusCode = rawStatus;
     }
 
-    if (statusCode >= 400 && statusCode < 500) {
-      clientMessage = sanitizeSensitiveText(err?.message || 'Request failed');
+    if (
+      (statusCode >= 400 && statusCode < 500) ||
+      (statusCode === 503 && err?.isOperational === true)
+    ) {
+      clientMessage = sanitizeSensitiveText(
+        err?.message || (statusCode === 503 ? 'Service temporarily unavailable' : 'Request failed'),
+      );
     }
   }
 
