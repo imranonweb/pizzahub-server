@@ -653,7 +653,10 @@ export async function deleteVendorMenuItem({ itemId, vendorId }, db = getDB()) {
 
   const itemIdCandidates = buildVendorIdCandidates(itemId);
   const linkedOrdersCount = await db.collection('orders').countDocuments({
-    itemId: { $in: itemIdCandidates },
+    $or: [
+      { itemId: { $in: itemIdCandidates } },
+      { 'items.menuItemId': { $in: itemIdCandidates } },
+    ],
   });
 
   if (linkedOrdersCount > 0) {
@@ -1001,7 +1004,10 @@ export async function deleteAdminMenuItem(itemId, db = getDB()) {
 
   const itemIdCandidates = buildVendorIdCandidates(itemId);
   const linkedOrdersCount = await db.collection('orders').countDocuments({
-    itemId: { $in: itemIdCandidates },
+    $or: [
+      { itemId: { $in: itemIdCandidates } },
+      { 'items.menuItemId': { $in: itemIdCandidates } },
+    ],
   });
 
   if (linkedOrdersCount > 0) {

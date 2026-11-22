@@ -37,6 +37,7 @@ export async function connectDB() {
 
       await ensureUserIndexes(database);
       await ensureMenuItemIndexes(database);
+      await ensureOrderIndexes(database);
 
       client = mongoClient;
       db = database;
@@ -73,6 +74,16 @@ export async function ensureMenuItemIndexes(database) {
     menuItemsCollection.createIndex({ status: 1, category: 1, location: 1, price: 1 }),
     menuItemsCollection.createIndex({ status: 1, createdAt: -1 }),
     menuItemsCollection.createIndex({ vendorId: 1, status: 1 }),
+  ]);
+}
+
+export async function ensureOrderIndexes(database) {
+  const ordersCollection = database.collection('orders');
+  await Promise.all([
+    ordersCollection.createIndex({ customerId: 1, createdAt: -1 }),
+    ordersCollection.createIndex({ vendorId: 1, status: 1, createdAt: -1 }),
+    ordersCollection.createIndex({ 'items.menuItemId': 1 }),
+    ordersCollection.createIndex({ itemId: 1 }),
   ]);
 }
 

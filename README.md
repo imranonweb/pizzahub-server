@@ -26,8 +26,10 @@ pizzahub-server/
 │   │   ├── admin-menu.controller.js
 │   │   ├── admin-users.controller.js
 │   │   ├── menu.controller.js
+│   │   ├── orders.controller.js
 │   │   ├── profile.controller.js
-│   │   └── vendor-menu.controller.js
+│   │   ├── vendor-menu.controller.js
+│   │   └── vendor-orders.controller.js
 │   ├── middleware/
 │   │   ├── auth.middleware.js
 │   │   ├── error.middleware.js
@@ -37,13 +39,17 @@ pizzahub-server/
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
 │   │   ├── menu.routes.js
+│   │   ├── orders.routes.js
 │   │   ├── profile.routes.js
-│   │   └── vendor-menu.routes.js
+│   │   ├── vendor-menu.routes.js
+│   │   └── vendor-orders.routes.js
 │   ├── services/
 │   │   ├── menu.service.js
+│   │   ├── order.service.js
 │   │   └── user.service.js
 │   ├── validators/
 │   │   ├── menu.validator.js
+│   │   ├── order.validator.js
 │   │   └── user.validator.js
 │   ├── app.js
 │   └── server.js
@@ -51,6 +57,7 @@ pizzahub-server/
 │   ├── admin-menu.api.test.js
 │   ├── auth.middleware.test.js
 │   ├── menu.api.test.js
+│   ├── orders.api.test.js
 │   ├── users.api.test.js
 │   └── vendor-menu.api.test.js
 ├── .env.example
@@ -140,6 +147,19 @@ Create a `.env` file in the project root based on `.env.example`:
 - **`PATCH /api/vendor/menu/:id`** — Updates editable fields (`itemName`, `category`, `description`, `price`, `location`, `images`) on an owned item; protected fields return `403`.
 - **`PATCH /api/vendor/menu/:id/status`** — Toggles an owned item between `"approved"` and `"inactive"`. Pending and rejected items cannot be self-activated; free-plan vendors are capped at 3 active items (checked against DB `subscriptionPlan` with concurrency protection).
 - **`DELETE /api/vendor/menu/:id`** — Deletes an owned menu item.
+
+### Customer Orders (Authenticated Customer Only)
+
+- **`POST /api/orders`** — Places an order from approved menu items (derives `customerId`, snapshots item details/prices server-side, splits multi-vendor carts into isolated vendor orders using MongoDB transactions on replica sets with atomic fallback on standalone servers, and records initial `statusHistory`).
+- **`GET /api/orders`** & **`GET /api/orders/my`** — Lists the authenticated customer's orders with `status`, `search`, `sort` (`newest|oldest|total-asc|total-desc`), `page`, and `limit`.
+- **`GET /api/orders/:id`** — Retrieves one owned customer order including its `statusHistory` timeline (`404` if missing or owned by another customer).
+- **`PATCH /api/orders/:id/cancel`** — Cancels an owned order only while `status === "pending"` (`400` otherwise).
+
+### Vendor Orders (Authenticated Vendor Only)
+
+- **`GET /api/vendor/orders`** — Lists orders belonging to the authenticated vendor with `status`, `search`, `sort`, `page`, and `limit`.
+- **`GET /api/vendor/orders/:id`** — Retrieves one vendor-owned order (`404` if missing or belonging to another vendor).
+- **`PATCH /api/vendor/orders/:id/status`** — Advances owned order lifecycle (`pending -> accepted | rejected`, `accepted -> preparing`, `preparing -> ready`) and appends `statusHistory`. Direct transitions to `delivered` or `out_for_delivery` are forbidden (`403`).
 
 ### User Profile (Authenticated, Not Blocked)
 
