@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import { ORDER_LIST_SORT_OPTIONS } from '../validators/order.validator.js';
+import { safeNotify } from './notification.service.js';
 
 const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 
@@ -502,6 +503,39 @@ export async function createCustomerOrder({ customerId, payload }, db = getDB())
   const insertedDocs = await persistOrdersAtomically(orderDocs, db);
   const serializedOrders = insertedDocs.map(serializeOrderForCustomer);
 
+  await Promise.all(
+    serializedOrders.flatMap((order) => [
+      safeNotify(
+        {
+          userId: order.customerId,
+          role: 'customer',
+          type: 'order_placed',
+          title: 'Order Placed',
+          message: `Your order with ${order.vendorName} ($${order.total.toFixed(2)}) has been submitted and is Pending.`,
+          relatedResourceId: order.id,
+          link: `/dashboard/customer/orders/${order.id}`,
+          metadata: { orderId: order.id, orderStatus: order.status },
+          eventKey: `order:placed:${order.id}`,
+        },
+        db,
+      ),
+      safeNotify(
+        {
+          userId: order.vendorId,
+          role: 'vendor',
+          type: 'new_order',
+          title: 'New Incoming Order',
+          message: `You received a new order (${order.items.length} item${order.items.length === 1 ? '' : 's'}, $${order.total.toFixed(2)}).`,
+          relatedResourceId: order.id,
+          link: '/dashboard/vendor/orders',
+          metadata: { orderId: order.id, orderStatus: order.status },
+          eventKey: `order:new:${order.id}`,
+        },
+        db,
+      ),
+    ]),
+  );
+
   return {
     order: serializedOrders[0],
     orders: serializedOrders,
@@ -585,7 +619,40 @@ export async function cancelCustomerOrder({ orderId, customerId, reason = '' }, 
     throw createAuthHttpError(409, 'Order status changed before cancellation could complete.');
   }
 
-  return serializeOrderForCustomer(updatedDoc);
+  const cancelledOrder = serializeOrderForCustomer(updatedDoc);
+
+  await Promise.all([
+    safeNotify(
+      {
+        userId: cancelledOrder.customerId,
+        role: 'customer',
+        type: 'order_cancelled',
+        title: 'Order Cancelled',
+        message: `Your order with ${cancelledOrder.vendorName} has been cancelled.`,
+        relatedResourceId: cancelledOrder.id,
+        link: `/dashboard/customer/orders/${cancelledOrder.id}`,
+        metadata: { orderId: cancelledOrder.id, orderStatus: 'cancelled' },
+        eventKey: `order:cancelled:cust:${cancelledOrder.id}`,
+      },
+      db,
+    ),
+    safeNotify(
+      {
+        userId: cancelledOrder.vendorId,
+        role: 'vendor',
+        type: 'vendor_order_cancelled',
+        title: 'Customer Cancelled Order',
+        message: `A customer cancelled pending order #${cancelledOrder.id.slice(-6)}.`,
+        relatedResourceId: cancelledOrder.id,
+        link: '/dashboard/vendor/orders',
+        metadata: { orderId: cancelledOrder.id, orderStatus: 'cancelled' },
+        eventKey: `order:cancelled:vend:${cancelledOrder.id}`,
+      },
+      db,
+    ),
+  ]);
+
+  return cancelledOrder;
 }
 
 async function fetchCustomersByIds(customerIds, db) {
@@ -703,5 +770,32 @@ export async function updateVendorOrderStatus(
   }
 
   const customerMap = await fetchCustomersByIds([updatedDoc.customerId], db);
-  return serializeOrderForVendor(updatedDoc, customerMap.get(String(updatedDoc.customerId ?? '')));
+  const vendorOrder = serializeOrderForVendor(
+    updatedDoc,
+    customerMap.get(String(updatedDoc.customerId ?? '')),
+  );
+
+  const statusLabels = {
+    accepted: 'Order Accepted',
+    rejected: 'Order Rejected',
+    preparing: 'Order Being Prepared',
+    ready: 'Order Ready',
+  };
+
+  await safeNotify(
+    {
+      userId: vendorOrder.customerId,
+      role: 'customer',
+      type: 'order_status',
+      title: statusLabels[targetStatus] || 'Order Status Updated',
+      message: `${vendorOrder.vendorName} updated your order status to ${targetStatus}.`,
+      relatedResourceId: vendorOrder.id,
+      link: `/dashboard/customer/orders/${vendorOrder.id}`,
+      metadata: { orderId: vendorOrder.id, orderStatus: targetStatus },
+      eventKey: `order:status:${vendorOrder.id}:${targetStatus}`,
+    },
+    db,
+  );
+
+  return vendorOrder;
 }

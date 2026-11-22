@@ -7,6 +7,7 @@ import {
   MENU_SORT_OPTIONS,
   VENDOR_MENU_SORT_OPTIONS,
 } from '../validators/menu.validator.js';
+import { safeNotify } from './notification.service.js';
 
 const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
 const VALID_MENU_STATUSES = new Set(['pending', 'approved', 'rejected', 'inactive']);
@@ -989,7 +990,41 @@ export async function moderateAdminMenuItem(
       db,
       SAFE_ADMIN_VENDOR_PROJECTION,
     );
-    return serializeAdminMenuItem(updatedDoc, vendorMap.get(String(updatedDoc.vendorId ?? '')));
+    const serializedItem = serializeAdminMenuItem(
+      updatedDoc,
+      vendorMap.get(String(updatedDoc.vendorId ?? '')),
+    );
+
+    if (targetStatus === 'approved' || targetStatus === 'rejected') {
+      await safeNotify(
+        {
+          userId: serializedItem.vendorId,
+          role: 'vendor',
+          type: targetStatus === 'approved' ? 'menu_approved' : 'menu_rejected',
+          title:
+            targetStatus === 'approved'
+              ? 'Menu Item Approved'
+              : 'Menu Item Rejected',
+          message:
+            targetStatus === 'approved'
+              ? `"${serializedItem.itemName}" is now approved and live on the public menu.`
+              : `"${serializedItem.itemName}" was rejected.${serializedItem.rejectionReason ? ` Reason: ${serializedItem.rejectionReason}` : ''}`,
+          relatedResourceId: serializedItem.id,
+          link: '/dashboard/vendor/menu',
+          metadata: {
+            menuItemId: serializedItem.id,
+            itemName: serializedItem.itemName,
+            ...(serializedItem.rejectionReason
+              ? { rejectionReason: serializedItem.rejectionReason }
+              : {}),
+          },
+          eventKey: `menu:${targetStatus}:${serializedItem.id}:${now.getTime()}`,
+        },
+        db,
+      );
+    }
+
+    return serializedItem;
   });
 }
 

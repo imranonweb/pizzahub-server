@@ -21,6 +21,10 @@ const betterAuthJwksUrl =
 const jwtIssuer = process.env.JWT_ISSUER?.trim().replace(/\/+$/, '') || betterAuthUrl;
 const jwtAudience = process.env.JWT_AUDIENCE?.trim().replace(/\/+$/, '') || betterAuthUrl;
 
+const rawStripePriceCents = process.env.STRIPE_PREMIUM_PRICE_CENTS?.trim();
+const parsedStripePriceCents = rawStripePriceCents ? Number(rawStripePriceCents) : 2900;
+const stripeCurrency = (process.env.STRIPE_CURRENCY?.trim() || 'usd').toLowerCase();
+
 export const env = {
   port: Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : 5000,
   nodeEnv,
@@ -33,6 +37,11 @@ export const env = {
   betterAuthJwksUrl,
   jwtIssuer,
   jwtAudience,
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() || '',
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || '',
+  stripePremiumPriceId: process.env.STRIPE_PREMIUM_PRICE_ID?.trim() || '',
+  stripePremiumPriceCents: parsedStripePriceCents,
+  stripeCurrency,
 };
 
 function assertValidHttpUrl(value, variableName) {
@@ -95,5 +104,13 @@ export function validateEnv() {
 
   if (!env.jwtAudience) {
     throw new Error('Missing required environment variables: JWT_AUDIENCE');
+  }
+
+  if (!Number.isInteger(env.stripePremiumPriceCents) || env.stripePremiumPriceCents <= 0) {
+    throw new Error('Invalid STRIPE_PREMIUM_PRICE_CENTS: must be a positive integer in cents');
+  }
+
+  if (!/^[a-z]{3}$/.test(env.stripeCurrency)) {
+    throw new Error('Invalid STRIPE_CURRENCY: must be a 3-letter ISO currency code');
   }
 }

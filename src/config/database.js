@@ -38,6 +38,8 @@ export async function connectDB() {
       await ensureUserIndexes(database);
       await ensureMenuItemIndexes(database);
       await ensureOrderIndexes(database);
+      await ensureTransactionIndexes(database);
+      await ensureNotificationIndexes(database);
 
       client = mongoClient;
       db = database;
@@ -84,6 +86,25 @@ export async function ensureOrderIndexes(database) {
     ordersCollection.createIndex({ vendorId: 1, status: 1, createdAt: -1 }),
     ordersCollection.createIndex({ 'items.menuItemId': 1 }),
     ordersCollection.createIndex({ itemId: 1 }),
+  ]);
+}
+
+export async function ensureTransactionIndexes(database) {
+  const transactionsCollection = database.collection('transactions');
+  await Promise.all([
+    transactionsCollection.createIndex({ stripeEventId: 1 }, { unique: true, sparse: true }),
+    transactionsCollection.createIndex({ vendorId: 1, createdAt: -1 }),
+  ]);
+}
+
+export async function ensureNotificationIndexes(database) {
+  const notificationsCollection = database.collection('notifications');
+  await Promise.all([
+    notificationsCollection.createIndex({ userId: 1, read: 1, createdAt: -1 }),
+    notificationsCollection.createIndex(
+      { userId: 1, eventKey: 1 },
+      { unique: true, sparse: true },
+    ),
   ]);
 }
 

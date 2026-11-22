@@ -7,6 +7,7 @@ Express.js backend API for the **PizzaHub** pizza ordering and delivery platform
 - **Runtime:** Node.js (ES Modules)
 - **Framework:** Express.js (`^5.3.0`)
 - **Authentication / JWT Verification:** `jose` (`^6.2.18`, EdDSA/Ed25519 JWKS verification compatible with Better Auth)
+- **Payments:** `stripe` (`^23.2.0`, Checkout Sessions, Billing Portal & signed Webhook verification)
 - **Validation:** Zod (`^4.6.7`)
 - **Database Driver:** MongoDB Native Driver (`^7.9.1`)
 - **Security & Middleware:** `helmet` (`^8.3.0`), `cors` (`^2.8.6`), `morgan` (`^1.12.1`)
@@ -21,13 +22,16 @@ pizzahub-server/
 │   ├── config/
 │   │   ├── database.js
 │   │   ├── env.js
-│   │   └── jwt.js
+│   │   ├── jwt.js
+│   │   └── stripe.js
 │   ├── controllers/
 │   │   ├── admin-menu.controller.js
 │   │   ├── admin-users.controller.js
 │   │   ├── menu.controller.js
+│   │   ├── notifications.controller.js
 │   │   ├── orders.controller.js
 │   │   ├── profile.controller.js
+│   │   ├── subscription.controller.js
 │   │   ├── vendor-menu.controller.js
 │   │   └── vendor-orders.controller.js
 │   ├── middleware/
@@ -39,17 +43,24 @@ pizzahub-server/
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
 │   │   ├── menu.routes.js
+│   │   ├── notifications.routes.js
 │   │   ├── orders.routes.js
 │   │   ├── profile.routes.js
 │   │   ├── vendor-menu.routes.js
-│   │   └── vendor-orders.routes.js
+│   │   ├── vendor-orders.routes.js
+│   │   ├── vendor-subscription.routes.js
+│   │   └── webhook.routes.js
 │   ├── services/
 │   │   ├── menu.service.js
+│   │   ├── notification.service.js
 │   │   ├── order.service.js
+│   │   ├── subscription.service.js
 │   │   └── user.service.js
 │   ├── validators/
 │   │   ├── menu.validator.js
+│   │   ├── notification.validator.js
 │   │   ├── order.validator.js
+│   │   ├── subscription.validator.js
 │   │   └── user.validator.js
 │   ├── app.js
 │   └── server.js
@@ -57,7 +68,9 @@ pizzahub-server/
 │   ├── admin-menu.api.test.js
 │   ├── auth.middleware.test.js
 │   ├── menu.api.test.js
+│   ├── notifications.api.test.js
 │   ├── orders.api.test.js
+│   ├── subscriptions.api.test.js
 │   ├── users.api.test.js
 │   └── vendor-menu.api.test.js
 ├── .env.example
@@ -80,7 +93,12 @@ Create a `.env` file in the project root based on `.env.example`:
 | `BETTER_AUTH_URL`      | Better Auth base URL (required in production unless overrides are set) | `http://localhost:3000`     |
 | `BETTER_AUTH_JWKS_URL` | JWKS endpoint URL (defaults to `${BETTER_AUTH_URL}/api/auth/jwks`) | `http://localhost:3000/api/auth/jwks` |
 | `JWT_ISSUER`           | Expected JWT `iss` claim (defaults to `BETTER_AUTH_URL`)   | `http://localhost:3000`                 |
-| `JWT_AUDIENCE`         | Expected JWT `aud` claim (defaults to `BETTER_AUTH_URL`)   | `http://localhost:3000`                 |
+| `JWT_AUDIENCE`               | Expected JWT `aud` claim (defaults to `BETTER_AUTH_URL`)               | `http://localhost:3000`                 |
+| `STRIPE_SECRET_KEY`          | Stripe secret API key (server-only, required for billing endpoints)    | `sk_test_...`                           |
+| `STRIPE_WEBHOOK_SECRET`      | Stripe webhook signing secret (`whsec_...`)                            | `whsec_...`                             |
+| `STRIPE_PREMIUM_PRICE_ID`    | Optional Stripe recurring Price ID (uses `STRIPE_PREMIUM_PRICE_CENTS` if unset) | `price_...`                    |
+| `STRIPE_PREMIUM_PRICE_CENTS` | Monthly Premium price in smallest currency unit (default `$29.00`)     | `2900`                                  |
+| `STRIPE_CURRENCY`            | 3-letter lowercase ISO currency code                                   | `usd`                                   |
 
 ## Authentication & Authorization Flow
 
@@ -160,6 +178,37 @@ Create a `.env` file in the project root based on `.env.example`:
 - **`GET /api/vendor/orders`** — Lists orders belonging to the authenticated vendor with `status`, `search`, `sort`, `page`, and `limit`.
 - **`GET /api/vendor/orders/:id`** — Retrieves one vendor-owned order (`404` if missing or belonging to another vendor).
 - **`PATCH /api/vendor/orders/:id/status`** — Advances owned order lifecycle (`pending -> accepted | rejected`, `accepted -> preparing`, `preparing -> ready`) and appends `statusHistory`. Direct transitions to `delivered` or `out_for_delivery` are forbidden (`403`).
+
+### Vendor Subscriptions & Stripe Webhooks
+
+- **`GET /api/vendor/subscription`** (Vendor) — Returns the vendor's effective database-backed subscription state (reconciling expired Premium periods back to Free), recent `transactions`, and available `plans`.
+- **`GET /api/vendor/subscription/plans`** (Vendor) — Returns server-configured Free and Premium subscription plans.
+- **`POST /api/vendor/subscription/checkout`** (Vendor) — Creates a Stripe-hosted Checkout Session (`mode: "subscription"`). Validates return URLs against `CLIENT_URL` origins and rejects forged prices/vendor IDs (`403`). Never activates Premium directly.
+- **`POST /api/vendor/subscription/portal`** (Vendor) — Creates a Stripe Customer Billing Portal session for vendors with an existing `stripeCustomerId`.
+- **`POST /api/webhooks/stripe`** (Public, raw body + `Stripe-Signature`) — Mounted with `express.raw({ type: "application/json" })` prior to `express.json()`. Verifies signature with `STRIPE_WEBHOOK_SECRET`, enforces `stripeEventId` idempotency and out-of-order timestamp checks (`subscriptionLastEventAt`), logs to `transactions`, updates vendor subscription fields without touching `role` or `isBlocked`, and emits notifications.
+
+#### Stripe Dashboard & Local CLI Webhook Setup
+
+1. **Webhook Endpoint URL:** `https://<your-server-domain>/api/webhooks/stripe`
+2. **Required Events in Stripe Dashboard:**
+   - `checkout.session.completed`
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `invoice.paid`
+   - `invoice.payment_failed`
+3. **Local Testing with Stripe CLI:**
+   ```bash
+   stripe listen --forward-to http://localhost:5000/api/webhooks/stripe
+   ```
+   Copy the generated `whsec_...` secret into `.env` as `STRIPE_WEBHOOK_SECRET`, then trigger test events with `stripe trigger checkout.session.completed` or complete a test Checkout Session.
+
+### Notifications (Authenticated Users)
+
+- **`GET /api/notifications`** — Lists the authenticated user's persistent notifications with optional `unread=true|false`, `type`, `page`, and `limit` (`1..100`). Returns `{ success: true, notifications, unreadCount, totalCount, pagination }`.
+- **`GET /api/notifications/unread-count`** — Returns `{ success: true, unreadCount }`.
+- **`PATCH /api/notifications/:id/read`** — Marks one owned notification as read (`404` if missing or owned by another user).
+- **`PATCH /api/notifications/read-all`** & **`POST /api/notifications/mark-all-read`** — Marks all unread notifications for the authenticated user as read (`{ success: true, count }`).
 
 ### User Profile (Authenticated, Not Blocked)
 

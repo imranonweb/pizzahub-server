@@ -8,6 +8,9 @@ import menuRoutes from './routes/menu.routes.js';
 import vendorMenuRoutes from './routes/vendor-menu.routes.js';
 import ordersRoutes from './routes/orders.routes.js';
 import vendorOrdersRoutes from './routes/vendor-orders.routes.js';
+import vendorSubscriptionRoutes from './routes/vendor-subscription.routes.js';
+import stripeWebhookRoutes from './routes/webhook.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminMenuRoutes from './routes/admin-menu.routes.js';
 import adminUsersRoutes from './routes/admin-users.routes.js';
@@ -40,6 +43,8 @@ const corsOptions = {
 app.use(helmet());
 app.use(cors(corsOptions));
 app.use(morgan(env.isProduction ? 'combined' : 'dev'));
+// Stripe webhook signature verification requires the exact raw request Buffer before JSON parsing.
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -48,6 +53,8 @@ app.use('/api/menu', menuRoutes);
 app.use('/api/vendor/menu', vendorMenuRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/vendor/orders', vendorOrdersRoutes);
+app.use('/api/vendor/subscription', vendorSubscriptionRoutes);
+app.use('/api/notifications', notificationsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/admin/menu', adminMenuRoutes);
 app.use('/api/admin/users', adminUsersRoutes);
