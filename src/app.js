@@ -4,6 +4,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { env } from './config/env.js';
 import healthRoutes from './routes/health.routes.js';
+import menuRoutes from './routes/menu.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminUsersRoutes from './routes/admin-users.routes.js';
 import { notFoundMiddleware } from './middleware/not-found.middleware.js';
@@ -39,6 +40,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/health', healthRoutes);
+app.use('/api/menu', menuRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/admin/users', adminUsersRoutes);
 

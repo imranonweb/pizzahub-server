@@ -24,6 +24,7 @@ pizzahub-server/
 │   │   └── jwt.js
 │   ├── controllers/
 │   │   ├── admin-users.controller.js
+│   │   ├── menu.controller.js
 │   │   └── profile.controller.js
 │   ├── middleware/
 │   │   ├── auth.middleware.js
@@ -32,15 +33,19 @@ pizzahub-server/
 │   ├── routes/
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
+│   │   ├── menu.routes.js
 │   │   └── profile.routes.js
 │   ├── services/
+│   │   ├── menu.service.js
 │   │   └── user.service.js
 │   ├── validators/
+│   │   ├── menu.validator.js
 │   │   └── user.validator.js
 │   ├── app.js
 │   └── server.js
 ├── tests/
 │   ├── auth.middleware.test.js
+│   ├── menu.api.test.js
 │   └── users.api.test.js
 ├── .env.example
 ├── .gitignore
@@ -115,6 +120,11 @@ Create a `.env` file in the project root based on `.env.example`:
     "database": "disconnected"
   }
   ```
+
+### Public Menu
+
+- **`GET /api/menu`** — Lists publicly approved menu items from active (non-blocked) vendors. Supports `search`, `category`, `location`, `sort` (`featured|price-asc|price-desc|newest`), `page`, and `limit` (`1..50`). Returns `{ success: true, items, locations, pagination }`.
+- **`GET /api/menu/:id`** — Returns `{ success: true, item }` for a single approved menu item (`400` on invalid ObjectId, `404` if missing, pending, rejected, inactive, or belonging to a blocked vendor).
 
 ### User Profile (Authenticated, Not Blocked)
 
