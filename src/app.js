@@ -7,6 +7,7 @@ import healthRoutes from './routes/health.routes.js';
 import menuRoutes from './routes/menu.routes.js';
 import vendorMenuRoutes from './routes/vendor-menu.routes.js';
 import profileRoutes from './routes/profile.routes.js';
+import adminMenuRoutes from './routes/admin-menu.routes.js';
 import adminUsersRoutes from './routes/admin-users.routes.js';
 import { notFoundMiddleware } from './middleware/not-found.middleware.js';
 import { errorMiddleware } from './middleware/error.middleware.js';
@@ -44,6 +45,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/vendor/menu', vendorMenuRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/admin/menu', adminMenuRoutes);
 app.use('/api/admin/users', adminUsersRoutes);
 
 app.use(notFoundMiddleware);

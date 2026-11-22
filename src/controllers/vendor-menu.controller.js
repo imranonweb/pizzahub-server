@@ -11,13 +11,15 @@ import {
   validateCreateVendorMenuBody,
   validateMenuItemIdParam,
   validateUpdateVendorMenuBody,
+  validateVendorMenuListQuery,
   validateVendorMenuStatusBody,
 } from '../validators/menu.validator.js';
 
 export function createVendorMenuController({ getDatabase = getDB } = {}) {
   return {
     async listMyMenuItems(req, res) {
-      const result = await listVendorMenuItems(req.user.id, getDatabase());
+      const query = validateVendorMenuListQuery(req.query);
+      const result = await listVendorMenuItems(req.user.id, query, getDatabase());
       return res.status(200).json({
         success: true,
         ...result,

@@ -23,6 +23,7 @@ pizzahub-server/
 │   │   ├── env.js
 │   │   └── jwt.js
 │   ├── controllers/
+│   │   ├── admin-menu.controller.js
 │   │   ├── admin-users.controller.js
 │   │   ├── menu.controller.js
 │   │   ├── profile.controller.js
@@ -32,6 +33,7 @@ pizzahub-server/
 │   │   ├── error.middleware.js
 │   │   └── not-found.middleware.js
 │   ├── routes/
+│   │   ├── admin-menu.routes.js
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
 │   │   ├── menu.routes.js
@@ -46,6 +48,7 @@ pizzahub-server/
 │   ├── app.js
 │   └── server.js
 ├── tests/
+│   ├── admin-menu.api.test.js
 │   ├── auth.middleware.test.js
 │   ├── menu.api.test.js
 │   ├── users.api.test.js
@@ -142,6 +145,13 @@ Create a `.env` file in the project root based on `.env.example`:
 
 - **`GET /api/profile`** — Returns `{ success: true, profile }` for the authenticated user (`req.user.id`).
 - **`PATCH /api/profile`** — Updates editable fields (`name`, `image`, `contactPhone`, `deliveryAddress`, and vendor-only `businessName`). Rejects protected fields (`role`, `isBlocked`, `subscriptionPlan`, `subscriptionExpiresAt`, `email`, etc.) with `403`.
+
+### Admin Menu Moderation (Admin Only)
+
+- **`GET /api/admin/menu`** — Lists menu items across vendors with `search`, `category`, `status`, `vendorId`, `sort` (`newest|oldest|price-asc|price-desc|status`), `page`, and `limit`. Returns `{ success: true, items, counts, pagination }`.
+- **`GET /api/admin/menu/:id`** — Returns `{ success: true, item }` with safe vendor summary (`id`, `name`, `email`, `businessName`, `subscriptionPlan`).
+- **`PATCH /api/admin/menu/:id/status`** — Moderates items (`approved`, `rejected` with optional `rejectionReason`, or `inactive` for published items), validating status transitions and Free-plan active item limits.
+- **`DELETE /api/admin/menu/:id`** — Deletes an inappropriate item when no `orders` reference it (`409` if order history exists).
 
 ### Admin User Management (Admin Only)
 

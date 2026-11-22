@@ -2,8 +2,10 @@ import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import {
+  ADMIN_MENU_SORT_OPTIONS,
   FREE_PLAN_ACTIVE_ITEM_LIMIT,
   MENU_SORT_OPTIONS,
+  VENDOR_MENU_SORT_OPTIONS,
 } from '../validators/menu.validator.js';
 
 const OBJECT_ID_HEX_REGEX = /^[a-f\d]{24}$/i;
@@ -39,6 +41,26 @@ export const SAFE_VENDOR_MENU_PROJECTION = Object.freeze({
   updatedAt: 1,
 });
 
+export const SAFE_ADMIN_MENU_PROJECTION = Object.freeze({
+  _id: 1,
+  id: 1,
+  vendorId: 1,
+  itemName: 1,
+  category: 1,
+  description: 1,
+  price: 1,
+  location: 1,
+  images: 1,
+  status: 1,
+  rejectionReason: 1,
+  approvedAt: 1,
+  approvedBy: 1,
+  rejectedAt: 1,
+  rejectedBy: 1,
+  createdAt: 1,
+  updatedAt: 1,
+});
+
 export const SAFE_PUBLIC_VENDOR_PROJECTION = Object.freeze({
   _id: 1,
   id: 1,
@@ -47,6 +69,16 @@ export const SAFE_PUBLIC_VENDOR_PROJECTION = Object.freeze({
   subscriptionPlan: 1,
   subscriptionExpiresAt: 1,
   isBlocked: 1,
+});
+
+export const SAFE_ADMIN_VENDOR_PROJECTION = Object.freeze({
+  _id: 1,
+  id: 1,
+  name: 1,
+  email: 1,
+  businessName: 1,
+  subscriptionPlan: 1,
+  subscriptionExpiresAt: 1,
 });
 
 const vendorActivationQueues = new Map();
@@ -230,7 +262,7 @@ function computeVendorMenuStats(items) {
   return stats;
 }
 
-async function fetchVendorsByIds(vendorIds, db) {
+async function fetchVendorsByIds(vendorIds, db, projection = SAFE_PUBLIC_VENDOR_PROJECTION) {
   const uniqueIds = Array.from(new Set(vendorIds.map((id) => String(id)).filter(Boolean)));
   if (uniqueIds.length === 0) {
     return new Map();
@@ -247,7 +279,7 @@ async function fetchVendorsByIds(vendorIds, db) {
       {
         $or: [{ _id: { $in: idCandidates } }, { id: { $in: uniqueIds } }],
       },
-      { projection: SAFE_PUBLIC_VENDOR_PROJECTION },
+      { projection },
     )
     .toArray();
 
@@ -392,22 +424,45 @@ export async function getPublicMenuItemById(itemId, db = getDB()) {
 }
 
 async function getOwnedMenuItemOrThrow(itemId, vendorId, db) {
-  const doc = await db
-    .collection('menuItems')
-    .findOne(buildObjectIdOrStringFilter(itemId), { projection: SAFE_VENDOR_MENU_PROJECTION });
+  const vendorCandidates = buildVendorIdCandidates(vendorId);
+  const doc = await db.collection('menuItems').findOne(
+    {
+      $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
+    },
+    { projection: SAFE_VENDOR_MENU_PROJECTION },
+  );
 
   if (!doc) {
     throw createAuthHttpError(404, 'Menu item not found.');
   }
 
-  if (String(doc.vendorId ?? '') !== String(vendorId)) {
-    throw createAuthHttpError(403, 'You do not have permission to access this menu item.');
-  }
-
   return doc;
 }
 
-export async function listVendorMenuItems(vendorId, db = getDB()) {
+function sortVendorItems(items, sortOption) {
+  const sorted = [...items];
+  sorted.sort((a, b) => {
+    if (sortOption === VENDOR_MENU_SORT_OPTIONS.PRICE_ASC) {
+      if (a.price !== b.price) return a.price - b.price;
+    } else if (sortOption === VENDOR_MENU_SORT_OPTIONS.PRICE_DESC) {
+      if (a.price !== b.price) return b.price - a.price;
+    } else if (sortOption === VENDOR_MENU_SORT_OPTIONS.NAME_ASC) {
+      const cmp = a.itemName.localeCompare(b.itemName);
+      if (cmp !== 0) return cmp;
+    }
+
+    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
+    if (timeDiff !== 0) return timeDiff;
+    return b.id.localeCompare(a.id);
+  });
+  return sorted;
+}
+
+export async function listVendorMenuItems(
+  vendorId,
+  { search = '', category = '', status = 'all', sort = VENDOR_MENU_SORT_OPTIONS.NEWEST, page = 1, limit = 50 } = {},
+  db = getDB(),
+) {
   const vendorCandidates = buildVendorIdCandidates(vendorId);
   const docs = await db
     .collection('menuItems')
@@ -415,10 +470,45 @@ export async function listVendorMenuItems(vendorId, db = getDB()) {
     .sort({ createdAt: -1, _id: -1 })
     .toArray();
 
-  const items = docs.map(serializeVendorMenuItem);
+  const allItems = docs.map(serializeVendorMenuItem);
+  const stats = computeVendorMenuStats(allItems);
+
+  const normalizedSearch = search.toLowerCase();
+  const normalizedCategory = category.toLowerCase();
+
+  const filtered = allItems.filter((item) => {
+    if (status !== 'all' && item.status !== status) {
+      return false;
+    }
+    if (normalizedCategory && item.category.toLowerCase() !== normalizedCategory) {
+      return false;
+    }
+    if (normalizedSearch) {
+      const haystack = `${item.itemName} ${item.location} ${item.description} ${item.category}`.toLowerCase();
+      if (!haystack.includes(normalizedSearch)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const sorted = sortVendorItems(filtered, sort);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const safePage = Math.min(page, totalPages);
+  const skip = (safePage - 1) * limit;
+
   return {
-    items,
-    stats: computeVendorMenuStats(items),
+    items: sorted.slice(skip, skip + limit),
+    stats,
+    pagination: {
+      page: safePage,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: safePage < totalPages,
+      hasPrevPage: safePage > 1,
+    },
   };
 }
 
@@ -452,7 +542,7 @@ export async function createVendorMenuItem({ vendorId, payload }, db = getDB()) 
 }
 
 export async function updateVendorMenuItem({ itemId, vendorId, updates }, db = getDB()) {
-  await getOwnedMenuItemOrThrow(itemId, vendorId, db);
+  const existing = await getOwnedMenuItemOrThrow(itemId, vendorId, db);
 
   const safeSet = {
     updatedAt: new Date(),
@@ -464,12 +554,19 @@ export async function updateVendorMenuItem({ itemId, vendorId, updates }, db = g
     }
   }
 
+  // Editing an approved, inactive, or rejected listing requires fresh admin moderation.
+  const updateOperation = { $set: safeSet };
+  if (existing.status !== 'pending') {
+    safeSet.status = 'pending';
+    updateOperation.$unset = { rejectionReason: '' };
+  }
+
   const vendorCandidates = buildVendorIdCandidates(vendorId);
   const updatedDoc = await db.collection('menuItems').findOneAndUpdate(
     {
       $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
     },
-    { $set: safeSet },
+    updateOperation,
     { returnDocument: 'after', projection: SAFE_VENDOR_MENU_PROJECTION },
   );
 
@@ -554,11 +651,367 @@ export async function updateVendorMenuItemStatus(
 export async function deleteVendorMenuItem({ itemId, vendorId }, db = getDB()) {
   await getOwnedMenuItemOrThrow(itemId, vendorId, db);
 
+  const itemIdCandidates = buildVendorIdCandidates(itemId);
+  const linkedOrdersCount = await db.collection('orders').countDocuments({
+    itemId: { $in: itemIdCandidates },
+  });
+
+  if (linkedOrdersCount > 0) {
+    throw createAuthHttpError(
+      409,
+      'Cannot delete a menu item that has existing order history. Deactivate it instead.',
+    );
+  }
+
   const vendorCandidates = buildVendorIdCandidates(vendorId);
   const result = await db.collection('menuItems').deleteOne({
     $and: [buildObjectIdOrStringFilter(itemId), { vendorId: { $in: vendorCandidates } }],
   });
 
+  if (!result || result.deletedCount === 0) {
+    throw createAuthHttpError(404, 'Menu item not found.');
+  }
+
+  return true;
+}
+
+const ALLOWED_ADMIN_TRANSITIONS = Object.freeze({
+  pending: new Set(['approved', 'rejected']),
+  approved: new Set(['rejected', 'inactive']),
+  inactive: new Set(['approved', 'rejected']),
+  rejected: new Set(),
+});
+
+function serializeAdminVendor(vendorDoc, fallbackVendorId) {
+  if (!vendorDoc) {
+    return {
+      id: fallbackVendorId,
+      name: 'Vendor',
+      email: '',
+      businessName: 'Local Pizzeria',
+      subscriptionPlan: 'free',
+    };
+  }
+
+  const name =
+    typeof vendorDoc.name === 'string' && vendorDoc.name.trim()
+      ? vendorDoc.name.trim()
+      : 'Vendor';
+  const businessName =
+    typeof vendorDoc.businessName === 'string' && vendorDoc.businessName.trim()
+      ? vendorDoc.businessName.trim()
+      : name;
+
+  return {
+    id: String(vendorDoc._id ?? vendorDoc.id ?? fallbackVendorId),
+    name,
+    email: typeof vendorDoc.email === 'string' ? vendorDoc.email : '',
+    businessName,
+    subscriptionPlan: resolveEffectiveSubscriptionPlan(vendorDoc),
+  };
+}
+
+export function serializeAdminMenuItem(doc, vendorDoc) {
+  const base = serializeVendorMenuItem(doc);
+  return {
+    ...base,
+    approvedAt: doc.approvedAt ? toIsoString(doc.approvedAt) : null,
+    rejectedAt: doc.rejectedAt ? toIsoString(doc.rejectedAt) : null,
+    vendor: serializeAdminVendor(vendorDoc, base.vendorId),
+  };
+}
+
+function computeAdminMenuCounts(items) {
+  const counts = {
+    all: items.length,
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    inactive: 0,
+  };
+
+  for (const item of items) {
+    if (item.status in counts) {
+      counts[item.status] += 1;
+    }
+  }
+
+  return counts;
+}
+
+function sortAdminItems(items, sortOption) {
+  const sorted = [...items];
+  const statusRank = { pending: 0, approved: 1, inactive: 2, rejected: 3 };
+
+  sorted.sort((a, b) => {
+    if (sortOption === ADMIN_MENU_SORT_OPTIONS.OLDEST) {
+      const diff = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
+      if (diff !== 0) return diff;
+    } else if (sortOption === ADMIN_MENU_SORT_OPTIONS.PRICE_ASC) {
+      if (a.price !== b.price) return a.price - b.price;
+    } else if (sortOption === ADMIN_MENU_SORT_OPTIONS.PRICE_DESC) {
+      if (a.price !== b.price) return b.price - a.price;
+    } else if (sortOption === ADMIN_MENU_SORT_OPTIONS.STATUS) {
+      const rankDiff = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+      if (rankDiff !== 0) return rankDiff;
+    }
+
+    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
+    if (timeDiff !== 0) return timeDiff;
+    return b.id.localeCompare(a.id);
+  });
+
+  return sorted;
+}
+
+export async function listAdminMenuItems(
+  {
+    search = '',
+    category = '',
+    status = 'all',
+    vendorId = '',
+    sort = ADMIN_MENU_SORT_OPTIONS.NEWEST,
+    page = 1,
+    limit = 50,
+  } = {},
+  db = getDB(),
+) {
+  const docs = await db
+    .collection('menuItems')
+    .find({}, { projection: SAFE_ADMIN_MENU_PROJECTION })
+    .toArray();
+
+  const vendorMap = await fetchVendorsByIds(
+    docs.map((doc) => doc.vendorId),
+    db,
+    SAFE_ADMIN_VENDOR_PROJECTION,
+  );
+
+  const serialized = docs.map((doc) =>
+    serializeAdminMenuItem(doc, vendorMap.get(String(doc.vendorId ?? ''))),
+  );
+  const counts = computeAdminMenuCounts(serialized);
+
+  const normalizedSearch = search.toLowerCase();
+  const normalizedCategory = category.toLowerCase();
+
+  const filtered = serialized.filter((item) => {
+    if (status !== 'all' && item.status !== status) {
+      return false;
+    }
+    if (normalizedCategory && item.category.toLowerCase() !== normalizedCategory) {
+      return false;
+    }
+    if (vendorId && item.vendorId !== vendorId) {
+      return false;
+    }
+    if (normalizedSearch) {
+      const haystack = [
+        item.itemName,
+        item.description,
+        item.location,
+        item.category,
+        item.vendor.businessName,
+        item.vendor.name,
+        item.vendor.email,
+      ]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(normalizedSearch)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const sorted = sortAdminItems(filtered, sort);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const safePage = Math.min(page, totalPages);
+  const skip = (safePage - 1) * limit;
+
+  return {
+    items: sorted.slice(skip, skip + limit),
+    counts,
+    pagination: {
+      page: safePage,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: safePage < totalPages,
+      hasPrevPage: safePage > 1,
+    },
+  };
+}
+
+export async function getAdminMenuItemById(itemId, db = getDB()) {
+  const doc = await db
+    .collection('menuItems')
+    .findOne(buildObjectIdOrStringFilter(itemId), { projection: SAFE_ADMIN_MENU_PROJECTION });
+
+  if (!doc) {
+    throw createAuthHttpError(404, 'Menu item not found.');
+  }
+
+  const vendorMap = await fetchVendorsByIds([doc.vendorId], db, SAFE_ADMIN_VENDOR_PROJECTION);
+  return serializeAdminMenuItem(doc, vendorMap.get(String(doc.vendorId ?? '')));
+}
+
+export async function moderateAdminMenuItem(
+  { itemId, adminId, targetStatus, rejectionReason = '' },
+  db = getDB(),
+) {
+  const initialDoc = await db
+    .collection('menuItems')
+    .findOne(buildObjectIdOrStringFilter(itemId), { projection: SAFE_ADMIN_MENU_PROJECTION });
+
+  if (!initialDoc) {
+    throw createAuthHttpError(404, 'Menu item not found.');
+  }
+
+  const vendorKey = String(initialDoc.vendorId ?? '');
+  if (vendorKey === String(adminId)) {
+    throw createAuthHttpError(403, 'Administrators cannot approve or reject their own listings.');
+  }
+
+  return withVendorActivationLock(vendorKey, async () => {
+    const existing = await db
+      .collection('menuItems')
+      .findOne(buildObjectIdOrStringFilter(itemId), { projection: SAFE_ADMIN_MENU_PROJECTION });
+
+    if (!existing) {
+      throw createAuthHttpError(404, 'Menu item not found.');
+    }
+
+    if (existing.status === targetStatus) {
+      const sameMsg =
+        targetStatus === 'approved'
+          ? 'This menu item is already approved.'
+          : targetStatus === 'rejected'
+            ? 'This menu item is already rejected.'
+            : 'This menu item is already inactive.';
+      throw createAuthHttpError(400, sameMsg);
+    }
+
+    if (existing.status === 'rejected') {
+      throw createAuthHttpError(
+        400,
+        'Rejected items must be updated by the vendor before re-review.',
+      );
+    }
+
+    const allowedNext = ALLOWED_ADMIN_TRANSITIONS[existing.status];
+    if (!allowedNext || !allowedNext.has(targetStatus)) {
+      throw createAuthHttpError(400, 'Invalid menu item status transition.');
+    }
+
+    if (targetStatus === 'approved') {
+      const vendorDoc = await db
+        .collection('users')
+        .findOne(buildObjectIdOrStringFilter(vendorKey), {
+          projection: { subscriptionPlan: 1, subscriptionExpiresAt: 1 },
+        });
+
+      const effectivePlan = resolveEffectiveSubscriptionPlan(vendorDoc);
+      if (effectivePlan === 'free') {
+        const vendorCandidates = buildVendorIdCandidates(vendorKey);
+        const activeCount = await db.collection('menuItems').countDocuments({
+          vendorId: { $in: vendorCandidates },
+          status: 'approved',
+        });
+
+        if (activeCount >= FREE_PLAN_ACTIVE_ITEM_LIMIT) {
+          throw createAuthHttpError(
+            409,
+            `Vendor has reached the Free plan limit of ${FREE_PLAN_ACTIVE_ITEM_LIMIT} active menu items.`,
+          );
+        }
+      }
+    }
+
+    const now = new Date();
+    let updateOperation;
+
+    if (targetStatus === 'approved') {
+      updateOperation = {
+        $set: {
+          status: 'approved',
+          updatedAt: now,
+          approvedAt: now,
+          approvedBy: String(adminId),
+        },
+        $unset: {
+          rejectionReason: '',
+          rejectedAt: '',
+          rejectedBy: '',
+        },
+      };
+    } else if (targetStatus === 'rejected') {
+      updateOperation = {
+        $set: {
+          status: 'rejected',
+          rejectionReason: rejectionReason.trim() || null,
+          updatedAt: now,
+          rejectedAt: now,
+          rejectedBy: String(adminId),
+        },
+        $unset: {
+          approvedAt: '',
+          approvedBy: '',
+        },
+      };
+    } else {
+      updateOperation = {
+        $set: {
+          status: 'inactive',
+          updatedAt: now,
+        },
+      };
+    }
+
+    const updatedDoc = await db.collection('menuItems').findOneAndUpdate(
+      {
+        $and: [buildObjectIdOrStringFilter(itemId), { status: existing.status }],
+      },
+      updateOperation,
+      { returnDocument: 'after', projection: SAFE_ADMIN_MENU_PROJECTION },
+    );
+
+    if (!updatedDoc) {
+      throw createAuthHttpError(409, 'Menu item status could not be updated. Please retry.');
+    }
+
+    const vendorMap = await fetchVendorsByIds(
+      [updatedDoc.vendorId],
+      db,
+      SAFE_ADMIN_VENDOR_PROJECTION,
+    );
+    return serializeAdminMenuItem(updatedDoc, vendorMap.get(String(updatedDoc.vendorId ?? '')));
+  });
+}
+
+export async function deleteAdminMenuItem(itemId, db = getDB()) {
+  const existing = await db
+    .collection('menuItems')
+    .findOne(buildObjectIdOrStringFilter(itemId), { projection: { _id: 1 } });
+
+  if (!existing) {
+    throw createAuthHttpError(404, 'Menu item not found.');
+  }
+
+  const itemIdCandidates = buildVendorIdCandidates(itemId);
+  const linkedOrdersCount = await db.collection('orders').countDocuments({
+    itemId: { $in: itemIdCandidates },
+  });
+
+  if (linkedOrdersCount > 0) {
+    throw createAuthHttpError(
+      409,
+      'Cannot delete a menu item that has existing order history. Reject or deactivate it instead.',
+    );
+  }
+
+  const result = await db.collection('menuItems').deleteOne(buildObjectIdOrStringFilter(itemId));
   if (!result || result.deletedCount === 0) {
     throw createAuthHttpError(404, 'Menu item not found.');
   }

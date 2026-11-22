@@ -27,6 +27,7 @@ let publicJwk;
 let dbMode = 'normal';
 let userDocs = [];
 let menuDocs = [];
+let orderDocs = [];
 
 const freeVendorId = new ObjectId('676000000000000000000001');
 const premiumVendorId = new ObjectId('676000000000000000000002');
@@ -95,7 +96,14 @@ function applyProjection(doc, projection) {
 function getMockDatabase() {
   return {
     collection(name) {
-      const source = name === 'menuItems' ? menuDocs : name === 'users' ? userDocs : [];
+      const source =
+        name === 'menuItems'
+          ? menuDocs
+          : name === 'users'
+            ? userDocs
+            : name === 'orders'
+              ? orderDocs
+              : [];
       return {
         async findOne(filter, options = {}) {
           if (dbMode === 'error') {
@@ -170,6 +178,11 @@ function getMockDatabase() {
           }
           if (update?.$set) {
             Object.assign(match, update.$set);
+          }
+          if (update?.$unset) {
+            for (const key of Object.keys(update.$unset)) {
+              delete match[key];
+            }
           }
           return applyProjection(match, options.projection);
         },
@@ -352,6 +365,7 @@ beforeEach(() => {
   ];
 
   menuDocs = [];
+  orderDocs = [];
 });
 
 after(async () => {
@@ -393,10 +407,26 @@ describe('Vendor Menu Management APIs (/api/vendor/menu)', () => {
       rejected: 1,
       inactive: 1,
     });
+    assert.deepEqual(res.body.pagination, {
+      page: 1,
+      limit: 50,
+      total: 4,
+      totalPages: 1,
+      hasNextPage: false,
+      hasPrevPage: false,
+    });
     assert.equal(
       res.body.items.some((item) => item.itemName === 'Other Vendor Item'),
       false,
     );
+
+    const filteredRes = await callApi('/api/vendor/menu?status=rejected&page=1&limit=2', {
+      token: freeToken,
+    });
+    assert.equal(filteredRes.status, 200);
+    assert.equal(filteredRes.body.items.length, 1);
+    assert.equal(filteredRes.body.items[0].itemName, 'Free Rejected 1');
+    assert.equal(filteredRes.body.stats.total, 4);
   });
 
   it('creates a new menu item with server-derived vendorId and pending status', async () => {
@@ -516,7 +546,7 @@ describe('Vendor Menu Management APIs (/api/vendor/menu)', () => {
     assert.equal(updateOwn.body.item.itemName, 'Updated Artisan Pie');
     assert.equal(updateOwn.body.item.price, 14.25);
 
-    // Cross-vendor isolation across GET / PATCH / PATCH status / DELETE
+    // Cross-vendor isolation across GET / PATCH / PATCH status / DELETE (returns 404)
     for (const reqOpts of [
       { method: 'GET' },
       { method: 'PATCH', body: { itemName: 'Hijacked' } },
@@ -527,8 +557,38 @@ describe('Vendor Menu Management APIs (/api/vendor/menu)', () => {
         `/api/vendor/menu/${otherItemId.toHexString()}${reqOpts.pathSuffix ?? ''}`,
         { method: reqOpts.method, token: freeToken, body: reqOpts.body },
       );
-      assert.equal(crossRes.status, 403);
+      assert.equal(crossRes.status, 404);
     }
+
+    // Editing an approved or rejected item resets it to pending for re-moderation
+    const approvedEditId = new ObjectId();
+    menuDocs.push(
+      makeMenuItemDoc({
+        id: approvedEditId,
+        vendorId: freeVendorId,
+        status: 'rejected',
+        rejectionReason: 'Fix description',
+      }),
+    );
+    const reModRes = await callApi(`/api/vendor/menu/${approvedEditId.toHexString()}`, {
+      method: 'PATCH',
+      token: freeToken,
+      body: { description: 'Updated full wood-fired description for admin review.' },
+    });
+    assert.equal(reModRes.status, 200);
+    assert.equal(reModRes.body.item.status, 'pending');
+    assert.equal(reModRes.body.item.rejectionReason, null);
+
+    // Deleting an item with existing order history is blocked (409)
+    const orderedItemId = new ObjectId();
+    menuDocs.push(makeMenuItemDoc({ id: orderedItemId, vendorId: freeVendorId, status: 'approved' }));
+    orderDocs.push({ _id: new ObjectId(), itemId: orderedItemId, vendorId: freeVendorId });
+
+    const delOrderedRes = await callApi(`/api/vendor/menu/${orderedItemId.toHexString()}`, {
+      method: 'DELETE',
+      token: freeToken,
+    });
+    assert.equal(delOrderedRes.status, 409);
 
     const delOwn = await callApi(`/api/vendor/menu/${ownItemId.toHexString()}`, {
       method: 'DELETE',
@@ -639,6 +699,20 @@ describe('Vendor Menu Management APIs (/api/vendor/menu)', () => {
     });
     assert.equal(premRes.status, 200);
     assert.equal(premRes.body.item.status, 'approved');
+
+    // Expired premium subscription falls back to Free plan 3-active-item limit
+    const expiredPremVendor = userDocs.find((u) => u._id.equals(premiumVendorId));
+    expiredPremVendor.subscriptionExpiresAt = new Date('2020-01-01T00:00:00.000Z');
+    const expiredInactive = new ObjectId();
+    menuDocs.push(
+      makeMenuItemDoc({ id: expiredInactive, vendorId: premiumVendorId, status: 'inactive' }),
+    );
+    const expiredRes = await callApi(`/api/vendor/menu/${expiredInactive.toHexString()}/status`, {
+      method: 'PATCH',
+      token: premiumToken,
+      body: { status: 'approved' },
+    });
+    assert.equal(expiredRes.status, 409);
   });
 
   it('rejects blocked vendors, non-vendor roles, unauthenticated callers, invalid IDs, missing items, and DB errors', async () => {

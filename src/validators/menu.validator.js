@@ -22,7 +22,33 @@ export const MENU_SORT_OPTIONS = Object.freeze({
   NEWEST: 'newest',
 });
 
+export const VENDOR_MENU_SORT_OPTIONS = Object.freeze({
+  NEWEST: 'newest',
+  PRICE_ASC: 'price-asc',
+  PRICE_DESC: 'price-desc',
+  NAME_ASC: 'name-asc',
+});
+
+export const ADMIN_MENU_SORT_OPTIONS = Object.freeze({
+  NEWEST: 'newest',
+  OLDEST: 'oldest',
+  PRICE_ASC: 'price-asc',
+  PRICE_DESC: 'price-desc',
+  STATUS: 'status',
+});
+
+export const MAX_REJECTION_REASON_LENGTH = 300;
+
 const ALLOWED_SORT_VALUES = new Set(Object.values(MENU_SORT_OPTIONS));
+const ALLOWED_VENDOR_SORT_VALUES = new Set(Object.values(VENDOR_MENU_SORT_OPTIONS));
+const ALLOWED_ADMIN_SORT_VALUES = new Set(Object.values(ADMIN_MENU_SORT_OPTIONS));
+const ALLOWED_VENDOR_STATUS_FILTERS = new Set([
+  'all',
+  'pending',
+  'approved',
+  'rejected',
+  'inactive',
+]);
 const ALLOWED_CATEGORIES_SET = new Set(MENU_CATEGORIES);
 
 const PROTECTED_MENU_FIELDS = new Set([
@@ -164,6 +190,22 @@ const vendorMenuStatusSchema = z
   })
   .strict();
 
+const adminMenuModerationSchema = z
+  .object({
+    status: z.enum(['approved', 'rejected', 'inactive'], {
+      error: 'Status must be "approved", "rejected", or "inactive".',
+    }),
+    rejectionReason: z
+      .string({ error: 'Rejection reason must be a string.' })
+      .trim()
+      .max(
+        MAX_REJECTION_REASON_LENGTH,
+        `Rejection reason must be ${MAX_REJECTION_REASON_LENGTH} characters or fewer.`,
+      )
+      .optional(),
+  })
+  .strict();
+
 export function validateMenuItemIdParam(rawId) {
   if (typeof rawId !== 'string' || !OBJECT_ID_HEX_REGEX.test(rawId.trim())) {
     throw createValidationError('Invalid menu item ID format.');
@@ -267,6 +309,98 @@ export function validatePublicMenuQuery(query = {}) {
   };
 }
 
+export function validateVendorMenuListQuery(query = {}) {
+  const searchRaw = query.search;
+  if (searchRaw !== undefined && typeof searchRaw !== 'string') {
+    throw createValidationError('Search query must be a string.', {
+      search: 'Search query must be a string.',
+    });
+  }
+  const search = typeof searchRaw === 'string' ? searchRaw.trim() : '';
+  if (search.length > 100) {
+    throw createValidationError('Search query must be 100 characters or fewer.', {
+      search: 'Search query must be 100 characters or fewer.',
+    });
+  }
+
+  const categoryRaw = query.category;
+  if (categoryRaw !== undefined && typeof categoryRaw !== 'string') {
+    throw createValidationError('Category filter must be a string.', {
+      category: 'Category filter must be a string.',
+    });
+  }
+  const categoryTrimmed = typeof categoryRaw === 'string' ? categoryRaw.trim() : '';
+  const category =
+    categoryTrimmed && categoryTrimmed.toLowerCase() !== 'all' ? categoryTrimmed : '';
+
+  const statusRaw = query.status;
+  if (statusRaw !== undefined && typeof statusRaw !== 'string') {
+    throw createValidationError('Status filter must be a string.', {
+      status: 'Status filter must be a string.',
+    });
+  }
+  const status =
+    typeof statusRaw === 'string' && statusRaw.trim()
+      ? statusRaw.trim().toLowerCase()
+      : 'all';
+  if (!ALLOWED_VENDOR_STATUS_FILTERS.has(status)) {
+    throw createValidationError(
+      'Invalid status filter. Allowed values: all, pending, approved, rejected, inactive.',
+      { status: 'Allowed values: all, pending, approved, rejected, inactive.' },
+    );
+  }
+
+  const sortRaw = query.sort;
+  if (sortRaw !== undefined && typeof sortRaw !== 'string') {
+    throw createValidationError('Sort option must be a string.', {
+      sort: 'Sort option must be a string.',
+    });
+  }
+  const sort =
+    typeof sortRaw === 'string' && sortRaw.trim()
+      ? sortRaw.trim().toLowerCase()
+      : VENDOR_MENU_SORT_OPTIONS.NEWEST;
+  if (!ALLOWED_VENDOR_SORT_VALUES.has(sort)) {
+    throw createValidationError(
+      'Invalid sort option. Allowed values: newest, price-asc, price-desc, name-asc.',
+      { sort: 'Allowed values: newest, price-asc, price-desc, name-asc.' },
+    );
+  }
+
+  const pageRaw = query.page;
+  let page = 1;
+  if (pageRaw !== undefined && pageRaw !== '') {
+    const parsedPage = Number(pageRaw);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
+      throw createValidationError('Page must be a positive integer.', {
+        page: 'Page must be a positive integer.',
+      });
+    }
+    page = parsedPage;
+  }
+
+  const limitRaw = query.limit ?? query.pageSize;
+  let limit = 50;
+  if (limitRaw !== undefined && limitRaw !== '') {
+    const parsedLimit = Number(limitRaw);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw createValidationError('Limit must be an integer between 1 and 100.', {
+        limit: 'Limit must be an integer between 1 and 100.',
+      });
+    }
+    limit = parsedLimit;
+  }
+
+  return {
+    search,
+    category,
+    status,
+    sort,
+    page,
+    limit,
+  };
+}
+
 export function validateCreateVendorMenuBody(body) {
   if (!isPlainObject(body)) {
     throw createValidationError('Request body must be a JSON object.');
@@ -331,4 +465,128 @@ export function validateVendorMenuStatusBody(body) {
   }
 
   return parsed.data;
+}
+
+export function validateAdminMenuListQuery(query = {}) {
+  const searchRaw = query.search;
+  if (searchRaw !== undefined && typeof searchRaw !== 'string') {
+    throw createValidationError('Search query must be a string.', {
+      search: 'Search query must be a string.',
+    });
+  }
+  const search = typeof searchRaw === 'string' ? searchRaw.trim() : '';
+  if (search.length > 100) {
+    throw createValidationError('Search query must be 100 characters or fewer.', {
+      search: 'Search query must be 100 characters or fewer.',
+    });
+  }
+
+  const categoryRaw = query.category;
+  if (categoryRaw !== undefined && typeof categoryRaw !== 'string') {
+    throw createValidationError('Category filter must be a string.', {
+      category: 'Category filter must be a string.',
+    });
+  }
+  const categoryTrimmed = typeof categoryRaw === 'string' ? categoryRaw.trim() : '';
+  const category =
+    categoryTrimmed && categoryTrimmed.toLowerCase() !== 'all' ? categoryTrimmed : '';
+
+  const statusRaw = query.status;
+  if (statusRaw !== undefined && typeof statusRaw !== 'string') {
+    throw createValidationError('Status filter must be a string.', {
+      status: 'Status filter must be a string.',
+    });
+  }
+  const status =
+    typeof statusRaw === 'string' && statusRaw.trim()
+      ? statusRaw.trim().toLowerCase()
+      : 'all';
+  if (!ALLOWED_VENDOR_STATUS_FILTERS.has(status)) {
+    throw createValidationError(
+      'Invalid status filter. Allowed values: all, pending, approved, rejected, inactive.',
+      { status: 'Allowed values: all, pending, approved, rejected, inactive.' },
+    );
+  }
+
+  const vendorIdRaw = query.vendorId;
+  if (vendorIdRaw !== undefined && typeof vendorIdRaw !== 'string') {
+    throw createValidationError('Invalid vendor ID format.', {
+      vendorId: 'Invalid vendor ID format.',
+    });
+  }
+  const vendorIdTrimmed = typeof vendorIdRaw === 'string' ? vendorIdRaw.trim() : '';
+  if (vendorIdTrimmed && !OBJECT_ID_HEX_REGEX.test(vendorIdTrimmed)) {
+    throw createValidationError('Invalid vendor ID format.', {
+      vendorId: 'Invalid vendor ID format.',
+    });
+  }
+
+  const sortRaw = query.sort;
+  if (sortRaw !== undefined && typeof sortRaw !== 'string') {
+    throw createValidationError('Sort option must be a string.', {
+      sort: 'Sort option must be a string.',
+    });
+  }
+  const sort =
+    typeof sortRaw === 'string' && sortRaw.trim()
+      ? sortRaw.trim().toLowerCase()
+      : ADMIN_MENU_SORT_OPTIONS.NEWEST;
+  if (!ALLOWED_ADMIN_SORT_VALUES.has(sort)) {
+    throw createValidationError(
+      'Invalid sort option. Allowed values: newest, oldest, price-asc, price-desc, status.',
+      { sort: 'Allowed values: newest, oldest, price-asc, price-desc, status.' },
+    );
+  }
+
+  const pageRaw = query.page;
+  let page = 1;
+  if (pageRaw !== undefined && pageRaw !== '') {
+    const parsedPage = Number(pageRaw);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
+      throw createValidationError('Page must be a positive integer.', {
+        page: 'Page must be a positive integer.',
+      });
+    }
+    page = parsedPage;
+  }
+
+  const limitRaw = query.limit ?? query.pageSize;
+  let limit = 50;
+  if (limitRaw !== undefined && limitRaw !== '') {
+    const parsedLimit = Number(limitRaw);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw createValidationError('Limit must be an integer between 1 and 100.', {
+        limit: 'Limit must be an integer between 1 and 100.',
+      });
+    }
+    limit = parsedLimit;
+  }
+
+  return {
+    search,
+    category,
+    status,
+    vendorId: vendorIdTrimmed,
+    sort,
+    page,
+    limit,
+  };
+}
+
+export function validateAdminMenuModerationBody(body) {
+  if (!isPlainObject(body)) {
+    throw createValidationError('Request body must be a JSON object.');
+  }
+
+  const parsed = adminMenuModerationSchema.safeParse(body);
+  if (!parsed.success) {
+    const fieldErrors = formatZodIssues(parsed.error.issues);
+    const firstMessage = parsed.error.issues[0]?.message || 'Invalid moderation payload.';
+    throw createValidationError(firstMessage, fieldErrors, 400);
+  }
+
+  return {
+    status: parsed.data.status,
+    rejectionReason: parsed.data.rejectionReason ?? '',
+  };
 }
