@@ -22,16 +22,26 @@ pizzahub-server/
 │   │   ├── database.js
 │   │   ├── env.js
 │   │   └── jwt.js
+│   ├── controllers/
+│   │   ├── admin-users.controller.js
+│   │   └── profile.controller.js
 │   ├── middleware/
 │   │   ├── auth.middleware.js
 │   │   ├── error.middleware.js
 │   │   └── not-found.middleware.js
 │   ├── routes/
-│   │   └── health.routes.js
+│   │   ├── admin-users.routes.js
+│   │   ├── health.routes.js
+│   │   └── profile.routes.js
+│   ├── services/
+│   │   └── user.service.js
+│   ├── validators/
+│   │   └── user.validator.js
 │   ├── app.js
 │   └── server.js
 ├── tests/
-│   └── auth.middleware.test.js
+│   ├── auth.middleware.test.js
+│   └── users.api.test.js
 ├── .env.example
 ├── .gitignore
 ├── package.json
@@ -105,3 +115,14 @@ Create a `.env` file in the project root based on `.env.example`:
     "database": "disconnected"
   }
   ```
+
+### User Profile (Authenticated, Not Blocked)
+
+- **`GET /api/profile`** — Returns `{ success: true, profile }` for the authenticated user (`req.user.id`).
+- **`PATCH /api/profile`** — Updates editable fields (`name`, `image`, `contactPhone`, `deliveryAddress`, and vendor-only `businessName`). Rejects protected fields (`role`, `isBlocked`, `subscriptionPlan`, `subscriptionExpiresAt`, `email`, etc.) with `403`.
+
+### Admin User Management (Admin Only)
+
+- **`GET /api/admin/users`** — Lists users with optional query params `search`, `role` (`all|customer|vendor|admin`), `status` / `accountStatus` (`all|active|blocked`), `page`, and `limit` / `pageSize`. Returns `{ success: true, users, pagination, counts }`.
+- **`GET /api/admin/users/:id`** — Returns `{ success: true, user }` for a valid MongoDB ObjectId (`404` if missing, `400` if malformed).
+- **`PATCH /api/admin/users/:id/block`** — Body `{ isBlocked: boolean }`. Blocks/unblocks the target user (`400` if an admin attempts to block their own account).

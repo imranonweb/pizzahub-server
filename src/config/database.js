@@ -35,6 +35,8 @@ export async function connectDB() {
         throw new Error('Database ping verification failed');
       }
 
+      await ensureUserIndexes(database);
+
       client = mongoClient;
       db = database;
       console.log(`Connected to MongoDB database: ${env.dbName}`);
@@ -53,6 +55,15 @@ export async function connectDB() {
   } finally {
     connectPromise = null;
   }
+}
+
+export async function ensureUserIndexes(database) {
+  const usersCollection = database.collection('users');
+  await Promise.all([
+    usersCollection.createIndex({ role: 1, isBlocked: 1, createdAt: -1 }),
+    usersCollection.createIndex({ createdAt: -1 }),
+    usersCollection.createIndex({ name: 1 }),
+  ]);
 }
 
 export function getDB() {

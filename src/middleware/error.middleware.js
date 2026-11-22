@@ -45,8 +45,14 @@ export function errorMiddleware(err, req, res, next) {
     console.error(sanitizeSensitiveText(err.stack));
   }
 
-  return res.status(statusCode).json({
+  const payload = {
     success: false,
     message: clientMessage,
-  });
+  };
+
+  if (statusCode === 400 && err?.errors && typeof err.errors === 'object') {
+    payload.errors = err.errors;
+  }
+
+  return res.status(statusCode).json(payload);
 }
