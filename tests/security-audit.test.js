@@ -84,6 +84,12 @@ describe('Security, Hardening & Production Readiness Audit', () => {
       const base = `http://127.0.0.1:${server.address().port}`;
       const errBase = `http://127.0.0.1:${errServer.address().port}`;
 
+      // Root landing route returns 200 (no 404 on deployment landing URL)
+      const rootRes = await fetch(`${base}/`);
+      assert.equal(rootRes.status, 200);
+      const rootBody = await rootRes.json();
+      assert.equal(rootBody.success, true);
+
       // Helmet headers, query parser safety, & no X-Powered-By
       assert.equal(app.get('query parser'), 'simple');
       const healthRes = await fetch(`${base}/api/menu/invalid-id`);

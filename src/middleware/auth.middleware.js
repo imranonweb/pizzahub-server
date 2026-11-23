@@ -1,4 +1,4 @@
-import { getDB } from '../config/database.js';
+import { ensureDBConnected, getDB } from '../config/database.js';
 import { createAuthHttpError, extractBearerToken, verifyAccessToken } from '../config/jwt.js';
 import { resolveEffectiveSubscriptionPlan } from '../utils/subscription-state.js';
 import { buildObjectIdOrStringFilter } from '../utils/validation.js';
@@ -57,7 +57,7 @@ export function createAuthMiddleware(options = {}) {
 
       let userDoc;
       try {
-        const db = getDatabase();
+        const db = getDatabase === getDB ? await ensureDBConnected() : await getDatabase();
         userDoc = await db
           .collection('users')
           .findOne(buildObjectIdOrStringFilter(verifiedToken.sub), {

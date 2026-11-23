@@ -5,10 +5,13 @@ const nodeEnv = process.env.NODE_ENV?.trim() || 'development';
 const isProduction = nodeEnv === 'production';
 
 const rawClientUrl = process.env.CLIENT_URL?.trim() || (isProduction ? '' : 'http://localhost:3000');
-const allowedOrigins = rawClientUrl
+const configuredOrigins = rawClientUrl
   .split(',')
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
+const allowedOrigins = isProduction
+  ? Array.from(new Set(configuredOrigins))
+  : Array.from(new Set([...configuredOrigins, 'http://localhost:3000']));
 
 const betterAuthUrl =
   process.env.BETTER_AUTH_URL?.trim().replace(/\/+$/, '') ||

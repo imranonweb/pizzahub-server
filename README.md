@@ -4,7 +4,8 @@ Express.js + MongoDB backend API for **PizzaHub**, a role-based pizza ordering a
 
 ## Links
 
-- **Live Website:** `<Add your deployed frontend URL here>`
+- **Live API Server:** https://pizzahub-server-bice.vercel.app
+- **Live Website (Client):** `<Add your deployed frontend URL here>`
 - **Client Repository:** `<Add your client GitHub repository URL here>`
 - **Server Repository:** https://github.com/imranonweb/pizzahub-server
 

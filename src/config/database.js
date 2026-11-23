@@ -35,11 +35,13 @@ export async function connectDB() {
         throw new Error('Database ping verification failed');
       }
 
-      await ensureUserIndexes(database);
-      await ensureMenuItemIndexes(database);
-      await ensureOrderIndexes(database);
-      await ensureTransactionIndexes(database);
-      await ensureNotificationIndexes(database);
+      await Promise.all([
+        ensureUserIndexes(database),
+        ensureMenuItemIndexes(database),
+        ensureOrderIndexes(database),
+        ensureTransactionIndexes(database),
+        ensureNotificationIndexes(database),
+      ]);
 
       client = mongoClient;
       db = database;
@@ -123,13 +125,18 @@ export function getDB() {
   return db;
 }
 
-export async function pingDB() {
-  if (!db) {
-    throw new Error('Database connection is not initialized');
+export async function ensureDBConnected() {
+  if (db) {
+    return db;
   }
 
+  return connectDB();
+}
+
+export async function pingDB() {
   try {
-    const result = await db.command({ ping: 1 }, { signal: AbortSignal.timeout(3000) });
+    const activeDb = db ?? (await connectDB());
+    const result = await activeDb.command({ ping: 1 }, { signal: AbortSignal.timeout(3000) });
 
     if (result?.ok !== 1) {
       throw new Error('Database ping failed');

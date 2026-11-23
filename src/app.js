@@ -73,6 +73,15 @@ export function createApp() {
   app.use(express.json({ limit: '100kb' }));
   app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
+  app.get('/', (_req, res) => {
+    return res.status(200).json({
+      success: true,
+      message: 'PizzaHub API Server is running',
+      health: '/api/health',
+      menu: '/api/menu',
+    });
+  });
+
   app.use('/api/health', healthRoutes);
   app.use('/api/menu', menuRoutes);
   app.use('/api/vendor/menu', sensitiveMutationLimiter, vendorMenuRoutes);
