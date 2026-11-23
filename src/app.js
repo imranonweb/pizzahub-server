@@ -14,6 +14,7 @@ import notificationsRoutes from './routes/notifications.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminMenuRoutes from './routes/admin-menu.routes.js';
 import adminUsersRoutes from './routes/admin-users.routes.js';
+import adminTransactionsRoutes from './routes/admin-transactions.routes.js';
 import { notFoundMiddleware } from './middleware/not-found.middleware.js';
 import { errorMiddleware } from './middleware/error.middleware.js';
 import { createRateLimiter } from './middleware/rate-limit.middleware.js';
@@ -82,6 +83,7 @@ export function createApp() {
   app.use('/api/profile', sensitiveMutationLimiter, profileRoutes);
   app.use('/api/admin/menu', sensitiveMutationLimiter, adminMenuRoutes);
   app.use('/api/admin/users', sensitiveMutationLimiter, adminUsersRoutes);
+  app.use('/api/admin/transactions', sensitiveMutationLimiter, adminTransactionsRoutes);
 
   app.use(notFoundMiddleware);
   app.use(errorMiddleware);

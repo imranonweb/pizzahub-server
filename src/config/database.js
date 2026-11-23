@@ -98,6 +98,8 @@ export async function ensureTransactionIndexes(database) {
   await Promise.all([
     transactionsCollection.createIndex({ stripeEventId: 1 }, { unique: true, sparse: true }),
     transactionsCollection.createIndex({ vendorId: 1, createdAt: -1 }),
+    transactionsCollection.createIndex({ createdAt: -1 }),
+    transactionsCollection.createIndex({ status: 1, createdAt: -1 }),
   ]);
 }
 

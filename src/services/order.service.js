@@ -37,6 +37,7 @@ const VENDOR_ORDER_TRANSITIONS = Object.freeze({
 const SAFE_ORDER_PROJECTION = Object.freeze({
   _id: 1,
   id: 1,
+  itemId: 1,
   customerId: 1,
   vendorId: 1,
   vendorName: 1,
@@ -48,6 +49,7 @@ const SAFE_ORDER_PROJECTION = Object.freeze({
   deliveryAddress: 1,
   contactPhone: 1,
   orderNotes: 1,
+  message: 1,
   deliveryDate: 1,
   statusHistory: 1,
   createdAt: 1,
@@ -129,19 +131,29 @@ function serializeOrderItems(items) {
 }
 
 export function serializeOrderForCustomer(doc) {
+  const items = serializeOrderItems(doc.items);
+  const resolvedNotes =
+    typeof doc.orderNotes === 'string' && doc.orderNotes
+      ? doc.orderNotes
+      : typeof doc.message === 'string'
+        ? doc.message
+        : '';
+
   return {
     id: String(doc._id ?? doc.id),
+    itemId: doc.itemId ? String(doc.itemId) : items[0]?.menuItemId ?? null,
     customerId: String(doc.customerId ?? ''),
     vendorId: String(doc.vendorId ?? ''),
     vendorName: typeof doc.vendorName === 'string' ? doc.vendorName : 'Local Kitchen',
     vendorLocation: typeof doc.vendorLocation === 'string' ? doc.vendorLocation : '',
-    items: serializeOrderItems(doc.items),
+    items,
     subtotal: Number(doc.subtotal ?? 0),
     total: Number(doc.total ?? 0),
     status: typeof doc.status === 'string' ? doc.status : 'pending',
     deliveryAddress: typeof doc.deliveryAddress === 'string' ? doc.deliveryAddress : '',
     contactPhone: typeof doc.contactPhone === 'string' ? doc.contactPhone : '',
-    orderNotes: typeof doc.orderNotes === 'string' ? doc.orderNotes : '',
+    orderNotes: resolvedNotes,
+    message: resolvedNotes,
     deliveryDate: typeof doc.deliveryDate === 'string' ? doc.deliveryDate : null,
     statusHistory: serializeStatusHistory(doc.statusHistory),
     createdAt: toIsoString(doc.createdAt),
@@ -150,8 +162,17 @@ export function serializeOrderForCustomer(doc) {
 }
 
 export function serializeOrderForVendor(doc, customerDoc) {
+  const items = serializeOrderItems(doc.items);
+  const resolvedNotes =
+    typeof doc.orderNotes === 'string' && doc.orderNotes
+      ? doc.orderNotes
+      : typeof doc.message === 'string'
+        ? doc.message
+        : '';
+
   return {
     id: String(doc._id ?? doc.id),
+    itemId: doc.itemId ? String(doc.itemId) : items[0]?.menuItemId ?? null,
     customerId: String(doc.customerId ?? ''),
     customer: {
       id: String(doc.customerId ?? ''),
@@ -163,13 +184,14 @@ export function serializeOrderForVendor(doc, customerDoc) {
     vendorId: String(doc.vendorId ?? ''),
     vendorName: typeof doc.vendorName === 'string' ? doc.vendorName : 'Local Kitchen',
     vendorLocation: typeof doc.vendorLocation === 'string' ? doc.vendorLocation : '',
-    items: serializeOrderItems(doc.items),
+    items,
     subtotal: Number(doc.subtotal ?? 0),
     total: Number(doc.total ?? 0),
     status: typeof doc.status === 'string' ? doc.status : 'pending',
     deliveryAddress: typeof doc.deliveryAddress === 'string' ? doc.deliveryAddress : '',
     contactPhone: typeof doc.contactPhone === 'string' ? doc.contactPhone : '',
-    orderNotes: typeof doc.orderNotes === 'string' ? doc.orderNotes : '',
+    orderNotes: resolvedNotes,
+    message: resolvedNotes,
     deliveryDate: typeof doc.deliveryDate === 'string' ? doc.deliveryDate : null,
     statusHistory: serializeStatusHistory(doc.statusHistory),
     createdAt: toIsoString(doc.createdAt),
@@ -392,7 +414,10 @@ export async function createCustomerOrder({ customerId, payload }, db = getDB())
         customerId: { $in: customerCandidates },
         deliveryDate: payload.deliveryDate,
         status: { $in: Array.from(ACTIVE_ORDER_STATUSES) },
-        'items.menuItemId': { $in: idCandidates },
+        $or: [
+          { 'items.menuItemId': { $in: idCandidates } },
+          { itemId: { $in: idCandidates } },
+        ],
       },
       { projection: { _id: 1 } },
     );
@@ -457,6 +482,7 @@ export async function createCustomerOrder({ customerId, payload }, db = getDB())
     const snapshotItems = vendorLines.map(({ location: _loc, ...snapshot }) => snapshot);
 
     orderDocs.push({
+      itemId: snapshotItems[0]?.menuItemId ?? null,
       customerId: storedCustomerId,
       vendorId: OBJECT_ID_HEX_REGEX.test(vId) ? new ObjectId(vId) : vId,
       vendorName,
@@ -468,6 +494,7 @@ export async function createCustomerOrder({ customerId, payload }, db = getDB())
       deliveryAddress: payload.deliveryAddress,
       contactPhone: payload.contactPhone,
       orderNotes: payload.orderNotes,
+      message: payload.orderNotes,
       ...(payload.deliveryDate ? { deliveryDate: payload.deliveryDate } : {}),
       statusHistory: [
         {

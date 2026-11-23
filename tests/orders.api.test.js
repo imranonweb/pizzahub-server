@@ -744,6 +744,40 @@ describe('Customer Order APIs (/api/orders)', () => {
     });
     assert.equal(cancelAccepted.status, 400);
   });
+
+  it('supports direct itemId + deliveryDate + message order form payload (PDF contract) without requiring contactPhone', async () => {
+    const token = await signUserToken(customerOneId.toHexString(), 'ayesha@pizzahub.test');
+
+    const res = await callApi('/api/orders', {
+      method: 'POST',
+      token,
+      body: {
+        itemId: vendorOnePizzaId.toHexString(),
+        deliveryDate: '2026-12-15',
+        deliveryAddress: 'House 22, Road 9, Gulshan, Dhaka',
+        message: 'Leave at reception desk please',
+      },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.order.itemId, vendorOnePizzaId.toHexString());
+    assert.equal(res.body.order.deliveryDate, '2026-12-15');
+    assert.equal(res.body.order.message, 'Leave at reception desk please');
+    assert.equal(res.body.order.orderNotes, 'Leave at reception desk please');
+    assert.equal(res.body.order.total, 12.5);
+
+    // Duplicate active order on same itemId and deliveryDate is blocked (409)
+    const dupRes = await callApi('/api/orders', {
+      method: 'POST',
+      token,
+      body: {
+        itemId: vendorOnePizzaId.toHexString(),
+        deliveryDate: '2026-12-15',
+        deliveryAddress: 'House 22, Road 9, Gulshan, Dhaka',
+        message: 'Second attempt same date',
+      },
+    });
+    assert.equal(dupRes.status, 409);
+  });
 });
 
 describe('Vendor Order Management APIs (/api/vendor/orders)', () => {

@@ -1,6 +1,40 @@
 # PizzaHub Server
 
-Express.js backend API for the **PizzaHub** pizza ordering and delivery platform.
+Express.js + MongoDB backend API for **PizzaHub**, a role-based pizza ordering and delivery platform where customers discover local pizza shops and place orders, restaurant vendors publish menus and manage incoming orders/Stripe subscriptions, and administrators moderate listings, manage users, and monitor immutable platform transactions.
+
+## Links
+
+- **Live Website:** `<Add your deployed frontend URL here>`
+- **Client Repository:** `<Add your client GitHub repository URL here>`
+- **Server Repository:** https://github.com/imranonweb/pizzahub-server
+
+## Key Features
+
+- **Role-Based Access Control (Customer, Vendor, Admin):** Asymmetric EdDSA (`Ed25519`) JWT verification via Better Auth JWKS paired with live MongoDB user/role/block checks on every protected route.
+- **Public Menu Discovery & Advanced Filtering:** Search by item name, filter by official pizza category or restaurant area/city, sort by featured (Premium vendors first), price ascending/descending, or newest, and paginate safely while hiding pending, rejected, inactive, or blocked-vendor items.
+- **Vendor Menu & Capacity Management:** Full menu CRUD with mandatory admin moderation (`status: "pending"` on submit/edit), resource ownership enforcement, Free plan 3-active-item cap with concurrency locking, and unlimited active listings for active Premium vendors.
+- **Order Management & Status Timeline:** Server-side price snapshotting, multi-vendor cart splitting inside MongoDB replica-set ACID transactions, duplicate active order protection per `(item, deliveryDate)`, customer cancellation restricted to `pending`, strict vendor lifecycle transitions (`pending -> accepted | rejected`, `accepted -> preparing -> ready`), and full `statusHistory` audit timeline.
+- **Stripe Vendor Subscriptions & Webhooks:** Server-created Stripe Checkout Sessions (`mode: "subscription"`), Customer Billing Portal sessions, raw-body `Stripe-Signature` HMAC verification, `stripeEventId` idempotency, out-of-order replay guards, and automatic expiration reconciliation.
+- **Admin Governance & Immutable Transactions:** Admin user search/filtering/blocking, menu moderation/deletion (protecting items linked to orders), and strictly read-only platform transaction monitoring (`GET /api/admin/transactions`).
+- **Notifications & Security Hardening:** Persistent per-user notifications with `eventKey` deduplication, Helmet headers, strict CORS allowlist, fixed-window rate limiting (`429`), Zod payload validation, and secret redaction in logs/errors.
+
+## Challenge Requirements Implementation
+
+### Challenge 1 — Advanced Search & Sorting (API Query Parameters)
+- **`GET /api/menu`** supports:
+  - `search`: case-insensitive, regex-escaped substring match against `itemName` (up to 100 characters).
+  - `category`: case-insensitive exact match against the 6 official pizza categories (`Classic Pizzas`, `Vegetarian Pizzas`, `Meat Lovers`, `Specialty / Gourmet Pizzas`, `Sides & Appetizers`, `Beverages & Desserts`).
+  - `location`: case-insensitive substring filter by restaurant area/city.
+  - `sort`: `featured` (active Premium vendors prioritized first, then newest), `price-asc` (lowest price first), `price-desc` (highest price first), or `newest`.
+  - `page` (`1..10000`) and `limit` (`1..50`): validated integer pagination rejecting array/boolean coercions (`400`).
+- Only items with `status: "approved"` belonging to non-blocked vendors are returned, alongside a sorted list of active `locations` for frontend filter dropdowns.
+
+### Challenge 2 — JWT / Token Verification (Middleware Flow)
+1. Client sends `Authorization: Bearer <EdDSA-JWT>` issued by Better Auth.
+2. `requireAuth` ([src/middleware/auth.middleware.js](src/middleware/auth.middleware.js)) extracts and validates the compact 3-part JWS format via `extractBearerToken` ([src/config/jwt.js](src/config/jwt.js)).
+3. `verifyAccessToken` verifies the `EdDSA` signature using cached remote JWKS (`BETTER_AUTH_JWKS_URL`) and strictly validates `iss`, `aud`, `exp`, `iat`, and non-empty `sub` (`401` on missing/malformed/expired/invalid tokens, `503` if JWKS is unreachable).
+4. Express looks up the live user document in MongoDB `users` by `sub`, rejects deleted accounts (`401`) or blocked accounts (`403`), and attaches a sanitized `req.user` (never trusting frontend or JWT role/plan claims).
+5. Route-level authorization middleware (`requireCustomer`, `requireVendor`, `requireAdmin`) enforces the database-backed role (`403` on unauthorized role access) before any controller runs.
 
 ## Tech Stack
 
@@ -26,6 +60,7 @@ pizzahub-server/
 │   │   └── stripe.js
 │   ├── controllers/
 │   │   ├── admin-menu.controller.js
+│   │   ├── admin-transactions.controller.js
 │   │   ├── admin-users.controller.js
 │   │   ├── menu.controller.js
 │   │   ├── notifications.controller.js
@@ -40,6 +75,7 @@ pizzahub-server/
 │   │   └── not-found.middleware.js
 │   ├── routes/
 │   │   ├── admin-menu.routes.js
+│   │   ├── admin-transactions.routes.js
 │   │   ├── admin-users.routes.js
 │   │   ├── health.routes.js
 │   │   ├── menu.routes.js
@@ -55,21 +91,28 @@ pizzahub-server/
 │   │   ├── notification.service.js
 │   │   ├── order.service.js
 │   │   ├── subscription.service.js
+│   │   ├── transaction.service.js
 │   │   └── user.service.js
+│   ├── utils/
+│   │   ├── subscription-state.js
+│   │   └── validation.js
 │   ├── validators/
 │   │   ├── menu.validator.js
 │   │   ├── notification.validator.js
 │   │   ├── order.validator.js
 │   │   ├── subscription.validator.js
+│   │   ├── transaction.validator.js
 │   │   └── user.validator.js
 │   ├── app.js
 │   └── server.js
 ├── tests/
 │   ├── admin-menu.api.test.js
+│   ├── admin-transactions.api.test.js
 │   ├── auth.middleware.test.js
 │   ├── menu.api.test.js
 │   ├── notifications.api.test.js
 │   ├── orders.api.test.js
+│   ├── security-audit.test.js
 │   ├── subscriptions.api.test.js
 │   ├── users.api.test.js
 │   └── vendor-menu.api.test.js
@@ -236,3 +279,13 @@ Create a `.env` file in the project root based on `.env.example`:
 - **`GET /api/admin/users`** — Lists users with optional query params `search`, `role` (`all|customer|vendor|admin`), `status` / `accountStatus` (`all|active|blocked`), `page`, and `limit` / `pageSize`. Returns `{ success: true, users, pagination, counts }`.
 - **`GET /api/admin/users/:id`** — Returns `{ success: true, user }` for a valid MongoDB ObjectId (`404` if missing, `400` if malformed).
 - **`PATCH /api/admin/users/:id/block`** — Body `{ isBlocked: boolean }`. Blocks/unblocks the target user (`400` if an admin attempts to block their own account).
+
+### Admin Platform Transactions (Admin Only, Strictly Read-Only)
+
+- **`GET /api/admin/transactions`** — Lists platform Stripe subscription transactions with safe vendor summaries (`id`, `name`, `email`, `businessName`, `subscriptionPlan`). Supports `search`, `status` (`all|paid|failed|pending|active|cancelling|cancelled`), `plan` (`all|free|premium`), `vendorId`, `sort` (`newest|oldest|amount-asc|amount-desc`), `page`, and `limit`. Returns `{ success: true, transactions, counts, pagination }`.
+- **`GET /api/admin/transactions/:id`** — Retrieves a single transaction record with safe vendor details (`400` on invalid ObjectId, `404` if missing).
+- **Immutability Enforcement:** Any `POST`, `PUT`, `PATCH`, or `DELETE` attempt against `/api/admin/transactions` or `/api/admin/transactions/:id` is rejected with `403` so payment history cannot be altered.
+
+## Testing Stripe Checkout Locally
+
+Use Stripe test card **`4242 4242 4242 4242`** (any future expiry date, any 3-digit CVC, any ZIP code) while `npm run dev` and `stripe listen` are running.

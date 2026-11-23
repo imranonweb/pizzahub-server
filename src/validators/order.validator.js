@@ -91,7 +91,22 @@ const createOrderSchema = z
       .max(
         MAX_DISTINCT_ORDER_ITEMS,
         `You can include up to ${MAX_DISTINCT_ORDER_ITEMS} line items per order.`,
-      ),
+      )
+      .optional(),
+    itemId: z
+      .string({ error: 'Menu item ID must be a string.' })
+      .trim()
+      .refine((value) => OBJECT_ID_HEX_REGEX.test(value), 'Invalid menu item ID format.')
+      .optional(),
+    quantity: z
+      .number({ error: 'Quantity must be a whole number.' })
+      .int('Quantity must be a whole number.')
+      .min(1, 'Quantity must be at least 1.')
+      .max(
+        MAX_ORDER_ITEM_QUANTITY,
+        `Quantity cannot exceed ${MAX_ORDER_ITEM_QUANTITY} per item.`,
+      )
+      .optional(),
     deliveryAddress: z
       .string({ error: 'Delivery address must be a string.' })
       .trim()
@@ -101,13 +116,20 @@ const createOrderSchema = z
       .string({ error: 'Contact phone must be a string.' })
       .trim()
       .refine(
-        (value) => PHONE_REGEX.test(value) && value.replace(/\D/g, '').length >= 7,
+        (value) =>
+          value === '' || (PHONE_REGEX.test(value) && value.replace(/\D/g, '').length >= 7),
         'Enter a valid phone number (7 to 20 characters).',
-      ),
+      )
+      .optional(),
     orderNotes: z
       .string({ error: 'Order notes must be a string.' })
       .trim()
       .max(300, 'Order notes must be 300 characters or fewer.')
+      .optional(),
+    message: z
+      .string({ error: 'Order message must be a string.' })
+      .trim()
+      .max(300, 'Order message must be 300 characters or fewer.')
       .optional(),
     deliveryDate: z
       .string({ error: 'Delivery date must be a string.' })
@@ -202,9 +224,21 @@ export function validateCreateOrderBody(body) {
     throw createValidationError(firstMessage, fieldErrors, 400);
   }
 
+  const rawLines = parsed.data.items
+    ? parsed.data.items
+    : parsed.data.itemId
+      ? [{ menuItemId: parsed.data.itemId, quantity: parsed.data.quantity ?? 1 }]
+      : null;
+
+  if (!rawLines || rawLines.length === 0) {
+    throw createValidationError('Add at least one menu item before placing an order.', {
+      items: 'Add at least one menu item before placing an order.',
+    });
+  }
+
   // Merge duplicate menuItemId entries and verify combined quantity cap.
   const mergedQuantities = new Map();
-  for (const line of parsed.data.items) {
+  for (const line of rawLines) {
     const nextQty = (mergedQuantities.get(line.menuItemId) ?? 0) + line.quantity;
     if (nextQty > MAX_ORDER_ITEM_QUANTITY) {
       throw createValidationError(
@@ -216,14 +250,17 @@ export function validateCreateOrderBody(body) {
     mergedQuantities.set(line.menuItemId, nextQty);
   }
 
+  const resolvedMessage = parsed.data.orderNotes ?? parsed.data.message ?? '';
+
   return {
     items: Array.from(mergedQuantities.entries()).map(([menuItemId, quantity]) => ({
       menuItemId,
       quantity,
     })),
     deliveryAddress: parsed.data.deliveryAddress,
-    contactPhone: parsed.data.contactPhone,
-    orderNotes: parsed.data.orderNotes ?? '',
+    contactPhone: parsed.data.contactPhone ?? '',
+    orderNotes: resolvedMessage,
+    message: resolvedMessage,
     deliveryDate: parsed.data.deliveryDate ?? null,
   };
 }
