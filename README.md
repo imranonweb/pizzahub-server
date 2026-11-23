@@ -61,7 +61,7 @@ src/
 │                   vendor-subscription, webhook, notifications, profile,
 │                   admin-menu, admin-users, admin-transactions
 ├── services/       menu, notification, order, subscription, transaction, user
-├── utils/          subscription-state.js, validation.js
+├── utils/          service-helpers.js, subscription-state.js, validation.js
 ├── validators/     menu, notification, order, subscription, transaction, user
 ├── app.js          Express app, middleware order, and route mounting
 └── server.js       Local startup & graceful shutdown (Vercel-compatible)

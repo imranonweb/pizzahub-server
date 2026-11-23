@@ -3,6 +3,13 @@ import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import { ORDER_LIST_SORT_OPTIONS } from '../validators/order.validator.js';
 import {
+  compareIsoCreatedAtDesc,
+  fetchUsersMapByIds,
+  paginateArray,
+  runWithOptionalTransaction,
+  toIsoString,
+} from '../utils/service-helpers.js';
+import {
   OBJECT_ID_HEX_REGEX,
   buildIdCandidates,
   buildObjectIdOrStringFilter,
@@ -83,21 +90,6 @@ const SAFE_ORDER_CUSTOMER_PROJECTION = Object.freeze({
 
 function roundMoney(value) {
   return Math.round(value * 100) / 100;
-}
-
-function toIsoString(value) {
-  if (!value) {
-    return new Date(0).toISOString();
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
-}
-
-function toTimestamp(value) {
-  if (!value) return 0;
-  const date = value instanceof Date ? value : new Date(value);
-  const ms = date.getTime();
-  return Number.isNaN(ms) ? 0 : ms;
 }
 
 function serializeStatusHistory(history) {
@@ -218,17 +210,15 @@ function sortOrders(orders, sortOption) {
   const sorted = [...orders];
   sorted.sort((a, b) => {
     if (sortOption === ORDER_LIST_SORT_OPTIONS.OLDEST) {
-      const diff = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-      if (diff !== 0) return diff;
+      if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+      return a.id.localeCompare(b.id);
     } else if (sortOption === ORDER_LIST_SORT_OPTIONS.TOTAL_ASC) {
       if (a.total !== b.total) return a.total - b.total;
     } else if (sortOption === ORDER_LIST_SORT_OPTIONS.TOTAL_DESC) {
       if (a.total !== b.total) return b.total - a.total;
     }
 
-    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
-    if (timeDiff !== 0) return timeDiff;
-    return b.id.localeCompare(a.id);
+    return compareIsoCreatedAtDesc(a.createdAt, b.createdAt, a.id, b.id);
   });
   return sorted;
 }
@@ -268,32 +258,12 @@ function filterAndPaginateOrders(serializedOrders, { search, status, sort, page,
   });
 
   const sorted = sortOrders(filtered, sort);
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, totalPages);
-  const skip = (safePage - 1) * limit;
+  const { items: orders, pagination } = paginateArray(sorted, page, limit);
 
   return {
-    orders: sorted.slice(skip, skip + limit),
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: safePage < totalPages,
-      hasPrevPage: safePage > 1,
-    },
+    orders,
+    pagination,
   };
-}
-
-function isStandaloneTransactionError(error) {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return (
-    error?.code === 20 ||
-    /Transaction numbers are only allowed on a replica set|does not support transactions/i.test(
-      message,
-    )
-  );
 }
 
 async function persistOrdersAtomically(orderDocs, db) {
@@ -304,43 +274,22 @@ async function persistOrdersAtomically(orderDocs, db) {
     return [{ ...orderDocs[0], _id: result.insertedId }];
   }
 
-  // Use a MongoDB transaction when running against a replica set / mongos;
-  // gracefully fall back to insertMany on standalone MongoDB instances or mocks.
-  if (typeof db.client?.startSession === 'function') {
-    const session = db.client.startSession();
-    try {
-      let insertedDocs = [];
-      await session.withTransaction(async () => {
-        const result = await ordersCollection.insertMany(orderDocs, { session });
-        insertedDocs = orderDocs.map((doc, idx) => ({
-          ...doc,
-          _id: result.insertedIds[idx],
-        }));
-      });
-      return insertedDocs;
-    } catch (error) {
-      if (!isStandaloneTransactionError(error)) {
-        throw error;
-      }
-    } finally {
-      await session.endSession();
+  return runWithOptionalTransaction(db, async (session) => {
+    if (typeof ordersCollection.insertMany === 'function') {
+      const result = await ordersCollection.insertMany(orderDocs, session ? { session } : undefined);
+      return orderDocs.map((doc, idx) => ({
+        ...doc,
+        _id: result.insertedIds[idx],
+      }));
     }
-  }
 
-  if (typeof ordersCollection.insertMany === 'function') {
-    const result = await ordersCollection.insertMany(orderDocs);
-    return orderDocs.map((doc, idx) => ({
-      ...doc,
-      _id: result.insertedIds[idx],
-    }));
-  }
-
-  const inserted = [];
-  for (const doc of orderDocs) {
-    const result = await ordersCollection.insertOne(doc);
-    inserted.push({ ...doc, _id: result.insertedId });
-  }
-  return inserted;
+    const inserted = [];
+    for (const doc of orderDocs) {
+      const result = await ordersCollection.insertOne(doc, session ? { session } : undefined);
+      inserted.push({ ...doc, _id: result.insertedId });
+    }
+    return inserted;
+  });
 }
 
 export async function createCustomerOrder({ customerId, payload }, db = getDB()) {
@@ -666,31 +615,6 @@ export async function cancelCustomerOrder({ orderId, customerId, reason = '' }, 
   return cancelledOrder;
 }
 
-async function fetchCustomersByIds(customerIds, db) {
-  const uniqueIds = Array.from(new Set(customerIds.map((id) => String(id)).filter(Boolean)));
-  if (uniqueIds.length === 0) {
-    return new Map();
-  }
-
-  const idCandidates = uniqueIds.flatMap((id) => buildIdCandidates(id));
-  const customerDocs = await db
-    .collection('users')
-    .find(
-      {
-        $or: [{ _id: { $in: idCandidates } }, { id: { $in: uniqueIds } }],
-      },
-      { projection: SAFE_ORDER_CUSTOMER_PROJECTION },
-    )
-    .toArray();
-
-  const map = new Map();
-  for (const doc of customerDocs) {
-    if (doc._id) map.set(String(doc._id), doc);
-    if (doc.id) map.set(String(doc.id), doc);
-  }
-  return map;
-}
-
 export async function listVendorOrders(vendorId, query, db = getDB()) {
   const vendorCandidates = buildIdCandidates(vendorId);
   const docs = await db
@@ -699,9 +623,10 @@ export async function listVendorOrders(vendorId, query, db = getDB()) {
     .sort({ createdAt: -1, _id: -1 })
     .toArray();
 
-  const customerMap = await fetchCustomersByIds(
+  const customerMap = await fetchUsersMapByIds(
     docs.map((doc) => doc.customerId),
     db,
+    SAFE_ORDER_CUSTOMER_PROJECTION,
   );
   const serialized = docs.map((doc) =>
     serializeOrderForVendor(doc, customerMap.get(String(doc.customerId ?? ''))),
@@ -723,7 +648,11 @@ export async function getVendorOrderById({ orderId, vendorId }, db = getDB()) {
     throw createAuthHttpError(404, 'Order not found.');
   }
 
-  const customerMap = await fetchCustomersByIds([doc.customerId], db);
+  const customerMap = await fetchUsersMapByIds(
+    [doc.customerId],
+    db,
+    SAFE_ORDER_CUSTOMER_PROJECTION,
+  );
   return serializeOrderForVendor(doc, customerMap.get(String(doc.customerId ?? '')));
 }
 
@@ -780,7 +709,11 @@ export async function updateVendorOrderStatus(
     throw createAuthHttpError(409, 'Order status changed concurrently. Please refresh and retry.');
   }
 
-  const customerMap = await fetchCustomersByIds([updatedDoc.customerId], db);
+  const customerMap = await fetchUsersMapByIds(
+    [updatedDoc.customerId],
+    db,
+    SAFE_ORDER_CUSTOMER_PROJECTION,
+  );
   const vendorOrder = serializeOrderForVendor(
     updatedDoc,
     customerMap.get(String(updatedDoc.customerId ?? '')),

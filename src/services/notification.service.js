@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
+import { buildPaginationMeta, toIsoString } from '../utils/service-helpers.js';
 import {
   OBJECT_ID_HEX_REGEX,
   buildIdCandidates,
@@ -22,14 +23,6 @@ export const SAFE_NOTIFICATION_PROJECTION = Object.freeze({
   createdAt: 1,
   readAt: 1,
 });
-
-function toIsoString(value) {
-  if (!value) {
-    return new Date(0).toISOString();
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
-}
 
 export function serializeNotification(doc) {
   return {
@@ -144,33 +137,27 @@ export async function listUserNotifications(
   }
 
   const skip = (page - 1) * limit;
+  const hasSubFilter = unreadOnly || type !== 'all';
 
-  const [docs, filteredCount, unreadCount, totalCount] = await Promise.all([
+  const [docs, unreadCount, totalCount, subFilteredCount] = await Promise.all([
     notificationsCollection
       .find(queryFilter, { projection: SAFE_NOTIFICATION_PROJECTION })
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray(),
-    notificationsCollection.countDocuments(queryFilter),
     notificationsCollection.countDocuments({ ...baseFilter, read: false }),
     notificationsCollection.countDocuments(baseFilter),
+    hasSubFilter ? notificationsCollection.countDocuments(queryFilter) : Promise.resolve(null),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredCount / limit));
+  const filteredCount = hasSubFilter ? subFilteredCount : totalCount;
 
   return {
     notifications: docs.map(serializeNotification),
     unreadCount,
     totalCount,
-    pagination: {
-      page,
-      limit,
-      total: filteredCount,
-      totalPages,
-      hasNextPage: page < totalPages,
-      hasPrevPage: page > 1,
-    },
+    pagination: buildPaginationMeta({ page, limit, total: filteredCount }),
   };
 }
 

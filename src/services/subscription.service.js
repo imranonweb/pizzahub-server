@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { createAuthHttpError } from '../config/jwt.js';
 import { getStripeClient } from '../config/stripe.js';
 import { FREE_PLAN_ACTIVE_ITEM_LIMIT } from '../validators/menu.validator.js';
+import { runWithOptionalTransaction, toIsoOrNull } from '../utils/service-helpers.js';
 import { resolveEffectiveSubscriptionState as resolveSharedSubscriptionState } from '../utils/subscription-state.js';
 import {
   OBJECT_ID_HEX_REGEX,
@@ -42,12 +43,6 @@ const SAFE_TRANSACTION_PROJECTION = Object.freeze({
   createdAt: 1,
 });
 
-function toIsoOrNull(value) {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 function extractSubscriptionPeriodEnd(subscription) {
   const raw =
     subscription?.current_period_end ??
@@ -82,16 +77,6 @@ function extractInvoicePeriodEnd(invoice) {
     return new Date(lineEnd * 1000);
   }
   return null;
-}
-
-function isStandaloneTransactionError(error) {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return (
-    error?.code === 20 ||
-    /Transaction numbers are only allowed on a replica set|does not support transactions/i.test(
-      message,
-    )
-  );
 }
 
 export function resolveEffectiveSubscriptionState(userDoc) {
@@ -400,7 +385,7 @@ async function resolveVendorForWebhook(eventObject, db) {
 }
 
 async function persistWebhookUpdates({ vendorFilter, userSet, txDoc }, db) {
-  const applyWrites = async (session) => {
+  return runWithOptionalTransaction(db, async (session) => {
     const opts = session ? { session } : undefined;
     if (userSet) {
       await db.collection('users').updateOne(vendorFilter, { $set: userSet }, opts);
@@ -408,25 +393,7 @@ async function persistWebhookUpdates({ vendorFilter, userSet, txDoc }, db) {
     if (txDoc) {
       await db.collection('transactions').insertOne(txDoc, opts);
     }
-  };
-
-  if (typeof db.client?.startSession === 'function') {
-    const session = db.client.startSession();
-    try {
-      await session.withTransaction(async () => {
-        await applyWrites(session);
-      });
-      return;
-    } catch (error) {
-      if (!isStandaloneTransactionError(error)) {
-        throw error;
-      }
-    } finally {
-      await session.endSession();
-    }
-  }
-
-  await applyWrites(undefined);
+  });
 }
 
 export async function processStripeWebhookEvent(event, { db = getDB() } = {}) {

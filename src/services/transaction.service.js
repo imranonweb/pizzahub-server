@@ -1,9 +1,14 @@
-import { ObjectId } from 'mongodb';
 import { getDB } from '../config/database.js';
 import { env } from '../config/env.js';
 import { createAuthHttpError } from '../config/jwt.js';
+import {
+  compareIsoCreatedAtDesc,
+  fetchUsersMapByIds,
+  paginateArray,
+  toIsoOrNull,
+} from '../utils/service-helpers.js';
 import { resolveEffectiveSubscriptionPlan } from '../utils/subscription-state.js';
-import { OBJECT_ID_HEX_REGEX, buildObjectIdOrStringFilter } from '../utils/validation.js';
+import { buildObjectIdOrStringFilter } from '../utils/validation.js';
 import { ADMIN_TRANSACTION_SORT_OPTIONS } from '../validators/transaction.validator.js';
 
 export const SAFE_ADMIN_TRANSACTION_PROJECTION = Object.freeze({
@@ -31,50 +36,6 @@ const SAFE_TRANSACTION_VENDOR_PROJECTION = Object.freeze({
   subscriptionStatus: 1,
   subscriptionExpiresAt: 1,
 });
-
-function toIsoOrNull(value) {
-  if (!value) {
-    return null;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function toTimestamp(value) {
-  if (!value) return 0;
-  const date = value instanceof Date ? value : new Date(value);
-  const ms = date.getTime();
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
-async function fetchVendorsForTransactions(vendorIds, db) {
-  const uniqueIds = Array.from(new Set(vendorIds.map((id) => String(id)).filter(Boolean)));
-  if (uniqueIds.length === 0) {
-    return new Map();
-  }
-
-  const objectIds = uniqueIds
-    .filter((id) => OBJECT_ID_HEX_REGEX.test(id))
-    .map((id) => new ObjectId(id));
-  const idCandidates = [...objectIds, ...uniqueIds];
-
-  const vendorDocs = await db
-    .collection('users')
-    .find(
-      {
-        $or: [{ _id: { $in: idCandidates } }, { id: { $in: uniqueIds } }],
-      },
-      { projection: SAFE_TRANSACTION_VENDOR_PROJECTION },
-    )
-    .toArray();
-
-  const vendorMap = new Map();
-  for (const vendor of vendorDocs) {
-    if (vendor._id) vendorMap.set(String(vendor._id), vendor);
-    if (vendor.id) vendorMap.set(String(vendor.id), vendor);
-  }
-  return vendorMap;
-}
 
 function serializeTransactionVendor(vendorDoc, fallbackVendorId) {
   if (!vendorDoc) {
@@ -158,18 +119,18 @@ function computeTransactionCounts(transactions) {
 function sortTransactions(transactions, sortOption) {
   const sorted = [...transactions];
   sorted.sort((a, b) => {
+    const aTime = a.createdAt || '';
+    const bTime = b.createdAt || '';
     if (sortOption === ADMIN_TRANSACTION_SORT_OPTIONS.OLDEST) {
-      const diff = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-      if (diff !== 0) return diff;
+      if (aTime !== bTime) return aTime < bTime ? -1 : 1;
+      return a.id.localeCompare(b.id);
     } else if (sortOption === ADMIN_TRANSACTION_SORT_OPTIONS.AMOUNT_ASC) {
       if (a.amount !== b.amount) return a.amount - b.amount;
     } else if (sortOption === ADMIN_TRANSACTION_SORT_OPTIONS.AMOUNT_DESC) {
       if (a.amount !== b.amount) return b.amount - a.amount;
     }
 
-    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
-    if (timeDiff !== 0) return timeDiff;
-    return b.id.localeCompare(a.id);
+    return compareIsoCreatedAtDesc(aTime, bTime, a.id, b.id);
   });
   return sorted;
 }
@@ -192,9 +153,10 @@ export async function listAdminTransactions(
     .sort({ createdAt: -1, _id: -1 })
     .toArray();
 
-  const vendorMap = await fetchVendorsForTransactions(
+  const vendorMap = await fetchUsersMapByIds(
     docs.map((doc) => doc.vendorId),
     db,
+    SAFE_TRANSACTION_VENDOR_PROJECTION,
   );
 
   const allSerialized = docs.map((doc) =>
@@ -234,22 +196,12 @@ export async function listAdminTransactions(
   });
 
   const sorted = sortTransactions(filtered, sort);
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, totalPages);
-  const skip = (safePage - 1) * limit;
+  const { items: transactions, pagination } = paginateArray(sorted, page, limit);
 
   return {
-    transactions: sorted.slice(skip, skip + limit),
+    transactions,
     counts,
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: safePage < totalPages,
-      hasPrevPage: safePage > 1,
-    },
+    pagination,
   };
 }
 
@@ -264,6 +216,10 @@ export async function getAdminTransactionById(transactionId, db = getDB()) {
     throw createAuthHttpError(404, 'Transaction not found.');
   }
 
-  const vendorMap = await fetchVendorsForTransactions([doc.vendorId], db);
+  const vendorMap = await fetchUsersMapByIds(
+    [doc.vendorId],
+    db,
+    SAFE_TRANSACTION_VENDOR_PROJECTION,
+  );
   return serializeAdminTransaction(doc, vendorMap.get(String(doc.vendorId ?? '')));
 }

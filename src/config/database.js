@@ -4,13 +4,31 @@ import { env, validateEnv } from './env.js';
 let client = null;
 let db = null;
 let connectPromise = null;
+let indexesPromise = null;
 
 function sanitizeErrorMessage(error) {
   const rawMessage = error instanceof Error ? error.message : String(error);
   return rawMessage.replace(/(mongodb(?:\+srv)?:\/\/)([^@\s]+@)/gi, '$1***:***@');
 }
 
-export async function connectDB() {
+async function ensureAllIndexesOnce(database) {
+  if (!indexesPromise) {
+    indexesPromise = Promise.all([
+      ensureUserIndexes(database),
+      ensureMenuItemIndexes(database),
+      ensureOrderIndexes(database),
+      ensureTransactionIndexes(database),
+      ensureNotificationIndexes(database),
+    ]).catch((error) => {
+      indexesPromise = null;
+      throw error;
+    });
+  }
+
+  return indexesPromise;
+}
+
+export async function connectDB({ awaitIndexes = process.env.VERCEL !== '1' } = {}) {
   validateEnv();
 
   if (db) {
@@ -23,25 +41,25 @@ export async function connectDB() {
 
   connectPromise = (async () => {
     const mongoClient = new MongoClient(env.mongodbUri, {
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      maxIdleTimeMS: 60000,
+      connectTimeoutMS: 5000,
+      socketTimeoutMS: 20000,
       serverSelectionTimeoutMS: 5000,
     });
 
     try {
       await mongoClient.connect();
       const database = mongoClient.db(env.dbName);
-      const pingResult = await database.command({ ping: 1 });
 
-      if (pingResult?.ok !== 1) {
-        throw new Error('Database ping verification failed');
+      if (awaitIndexes) {
+        await ensureAllIndexesOnce(database);
+      } else {
+        void ensureAllIndexesOnce(database).catch((err) => {
+          console.warn('Deferred index initialization warning:', sanitizeErrorMessage(err));
+        });
       }
-
-      await Promise.all([
-        ensureUserIndexes(database),
-        ensureMenuItemIndexes(database),
-        ensureOrderIndexes(database),
-        ensureTransactionIndexes(database),
-        ensureNotificationIndexes(database),
-      ]);
 
       client = mongoClient;
       db = database;
@@ -157,6 +175,7 @@ export async function closeDB() {
   const activeClient = client;
   client = null;
   db = null;
+  indexesPromise = null;
 
   try {
     await activeClient.close();

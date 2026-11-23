@@ -7,6 +7,12 @@ import {
   MENU_SORT_OPTIONS,
   VENDOR_MENU_SORT_OPTIONS,
 } from '../validators/menu.validator.js';
+import {
+  compareIsoCreatedAtDesc,
+  fetchUsersMapByIds,
+  paginateArray,
+  toIsoString,
+} from '../utils/service-helpers.js';
 import { resolveEffectiveSubscriptionPlan } from '../utils/subscription-state.js';
 import {
   OBJECT_ID_HEX_REGEX,
@@ -113,23 +119,6 @@ async function withVendorActivationLock(vendorId, task) {
   }
 }
 
-function toIsoString(value) {
-  if (!value) {
-    return new Date(0).toISOString();
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
-}
-
-function toTimestamp(value) {
-  if (!value) {
-    return 0;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  const ms = date.getTime();
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
 function normalizeImages(rawImages) {
   return Array.from(
     new Set(
@@ -230,40 +219,6 @@ function computeVendorMenuStats(items) {
   return stats;
 }
 
-async function fetchVendorsByIds(vendorIds, db, projection = SAFE_PUBLIC_VENDOR_PROJECTION) {
-  const uniqueIds = Array.from(new Set(vendorIds.map((id) => String(id)).filter(Boolean)));
-  if (uniqueIds.length === 0) {
-    return new Map();
-  }
-
-  const objectIds = uniqueIds
-    .filter((id) => OBJECT_ID_HEX_REGEX.test(id))
-    .map((id) => new ObjectId(id));
-
-  const idCandidates = [...objectIds, ...uniqueIds];
-  const vendorDocs = await db
-    .collection('users')
-    .find(
-      {
-        $or: [{ _id: { $in: idCandidates } }, { id: { $in: uniqueIds } }],
-      },
-      { projection },
-    )
-    .toArray();
-
-  const vendorMap = new Map();
-  for (const vendor of vendorDocs) {
-    if (vendor._id) {
-      vendorMap.set(String(vendor._id), vendor);
-    }
-    if (vendor.id) {
-      vendorMap.set(String(vendor.id), vendor);
-    }
-  }
-
-  return vendorMap;
-}
-
 function sortPublicItems(items, sortOption) {
   const sorted = [...items];
 
@@ -284,12 +239,7 @@ function sortPublicItems(items, sortOption) {
       }
     }
 
-    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
-    if (timeDiff !== 0) {
-      return timeDiff;
-    }
-
-    return b.id.localeCompare(a.id);
+    return compareIsoCreatedAtDesc(a.createdAt, b.createdAt, a.id, b.id);
   });
 
   return sorted;
@@ -314,57 +264,60 @@ export async function listPublicMenuItems(
     filter.location = new RegExp(escapeRegex(location), 'i');
   }
 
-  const [matchingDocs, approvedLocationDocs] = await Promise.all([
-    menuCollection.find(filter, { projection: SAFE_PUBLIC_MENU_PROJECTION }).toArray(),
-    menuCollection
-      .find({ status: 'approved' }, { projection: { location: 1, vendorId: 1 } })
-      .toArray(),
-  ]);
+  const hasSubFilter = Boolean(search || category || location);
+  const matchingDocs = await menuCollection
+    .find(filter, { projection: SAFE_PUBLIC_MENU_PROJECTION })
+    .toArray();
+  const approvedLocationDocs = hasSubFilter
+    ? await menuCollection
+        .find({ status: 'approved' }, { projection: { location: 1, vendorId: 1 } })
+        .toArray()
+    : matchingDocs;
 
-  const allVendorIds = [
-    ...matchingDocs.map((doc) => doc.vendorId),
-    ...approvedLocationDocs.map((doc) => doc.vendorId),
-  ];
-  const vendorMap = await fetchVendorsByIds(allVendorIds, db);
+  const allVendorIds = hasSubFilter
+    ? [
+        ...matchingDocs.map((doc) => doc.vendorId),
+        ...approvedLocationDocs.map((doc) => doc.vendorId),
+      ]
+    : matchingDocs.map((doc) => doc.vendorId);
+  const vendorMap = await fetchUsersMapByIds(allVendorIds, db, SAFE_PUBLIC_VENDOR_PROJECTION);
 
-  const visibleItems = matchingDocs
-    .filter((doc) => {
+  const visibleItems = [];
+  const locationSet = new Set();
+
+  for (const doc of matchingDocs) {
+    const vendor = vendorMap.get(String(doc.vendorId ?? ''));
+    if (vendor?.isBlocked === true) {
+      continue;
+    }
+    visibleItems.push(serializePublicMenuItem(doc, vendor));
+    if (!hasSubFilter && typeof doc.location === 'string') {
+      const loc = doc.location.trim();
+      if (loc) locationSet.add(loc);
+    }
+  }
+
+  if (hasSubFilter) {
+    for (const doc of approvedLocationDocs) {
       const vendor = vendorMap.get(String(doc.vendorId ?? ''));
-      return vendor?.isBlocked !== true;
-    })
-    .map((doc) => serializePublicMenuItem(doc, vendorMap.get(String(doc.vendorId ?? ''))));
+      if (vendor?.isBlocked === true) {
+        continue;
+      }
+      if (typeof doc.location === 'string') {
+        const loc = doc.location.trim();
+        if (loc) locationSet.add(loc);
+      }
+    }
+  }
 
   const sortedItems = sortPublicItems(visibleItems, sort);
-
-  const total = sortedItems.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, totalPages);
-  const skip = (safePage - 1) * limit;
-  const paginatedItems = sortedItems.slice(skip, skip + limit);
-
-  const locations = Array.from(
-    new Set(
-      approvedLocationDocs
-        .filter((doc) => {
-          const vendor = vendorMap.get(String(doc.vendorId ?? ''));
-          return vendor?.isBlocked !== true;
-        })
-        .map((doc) => (typeof doc.location === 'string' ? doc.location.trim() : ''))
-        .filter(Boolean),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
+  const { items, pagination } = paginateArray(sortedItems, page, limit);
+  const locations = Array.from(locationSet).sort((a, b) => a.localeCompare(b));
 
   return {
-    items: paginatedItems,
+    items,
     locations,
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: safePage < totalPages,
-      hasPrevPage: safePage > 1,
-    },
+    pagination,
   };
 }
 
@@ -381,7 +334,7 @@ export async function getPublicMenuItemById(itemId, db = getDB()) {
     throw createAuthHttpError(404, 'Menu item not found.');
   }
 
-  const vendorMap = await fetchVendorsByIds([doc.vendorId], db);
+  const vendorMap = await fetchUsersMapByIds([doc.vendorId], db, SAFE_PUBLIC_VENDOR_PROJECTION);
   const vendorDoc = vendorMap.get(String(doc.vendorId ?? ''));
 
   if (vendorDoc?.isBlocked === true) {
@@ -419,9 +372,7 @@ function sortVendorItems(items, sortOption) {
       if (cmp !== 0) return cmp;
     }
 
-    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
-    if (timeDiff !== 0) return timeDiff;
-    return b.id.localeCompare(a.id);
+    return compareIsoCreatedAtDesc(a.createdAt, b.createdAt, a.id, b.id);
   });
   return sorted;
 }
@@ -461,22 +412,12 @@ export async function listVendorMenuItems(
   });
 
   const sorted = sortVendorItems(filtered, sort);
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, totalPages);
-  const skip = (safePage - 1) * limit;
+  const { items, pagination } = paginateArray(sorted, page, limit);
 
   return {
-    items: sorted.slice(skip, skip + limit),
+    items,
     stats,
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: safePage < totalPages,
-      hasPrevPage: safePage > 1,
-    },
+    pagination,
   };
 }
 
@@ -716,8 +657,10 @@ function sortAdminItems(items, sortOption) {
 
   sorted.sort((a, b) => {
     if (sortOption === ADMIN_MENU_SORT_OPTIONS.OLDEST) {
-      const diff = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-      if (diff !== 0) return diff;
+      if (a.createdAt !== b.createdAt) {
+        return a.createdAt < b.createdAt ? -1 : 1;
+      }
+      return a.id.localeCompare(b.id);
     } else if (sortOption === ADMIN_MENU_SORT_OPTIONS.PRICE_ASC) {
       if (a.price !== b.price) return a.price - b.price;
     } else if (sortOption === ADMIN_MENU_SORT_OPTIONS.PRICE_DESC) {
@@ -727,9 +670,7 @@ function sortAdminItems(items, sortOption) {
       if (rankDiff !== 0) return rankDiff;
     }
 
-    const timeDiff = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
-    if (timeDiff !== 0) return timeDiff;
-    return b.id.localeCompare(a.id);
+    return compareIsoCreatedAtDesc(a.createdAt, b.createdAt, a.id, b.id);
   });
 
   return sorted;
@@ -752,7 +693,7 @@ export async function listAdminMenuItems(
     .find({}, { projection: SAFE_ADMIN_MENU_PROJECTION })
     .toArray();
 
-  const vendorMap = await fetchVendorsByIds(
+  const vendorMap = await fetchUsersMapByIds(
     docs.map((doc) => doc.vendorId),
     db,
     SAFE_ADMIN_VENDOR_PROJECTION,
@@ -796,22 +737,12 @@ export async function listAdminMenuItems(
   });
 
   const sorted = sortAdminItems(filtered, sort);
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, totalPages);
-  const skip = (safePage - 1) * limit;
+  const { items, pagination } = paginateArray(sorted, page, limit);
 
   return {
-    items: sorted.slice(skip, skip + limit),
+    items,
     counts,
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: safePage < totalPages,
-      hasPrevPage: safePage > 1,
-    },
+    pagination,
   };
 }
 
@@ -824,7 +755,7 @@ export async function getAdminMenuItemById(itemId, db = getDB()) {
     throw createAuthHttpError(404, 'Menu item not found.');
   }
 
-  const vendorMap = await fetchVendorsByIds([doc.vendorId], db, SAFE_ADMIN_VENDOR_PROJECTION);
+  const vendorMap = await fetchUsersMapByIds([doc.vendorId], db, SAFE_ADMIN_VENDOR_PROJECTION);
   return serializeAdminMenuItem(doc, vendorMap.get(String(doc.vendorId ?? '')));
 }
 
@@ -961,7 +892,7 @@ export async function moderateAdminMenuItem(
       throw createAuthHttpError(409, 'Menu item status could not be updated. Please retry.');
     }
 
-    const vendorMap = await fetchVendorsByIds(
+    const vendorMap = await fetchUsersMapByIds(
       [updatedDoc.vendorId],
       db,
       SAFE_ADMIN_VENDOR_PROJECTION,

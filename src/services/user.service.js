@@ -1,5 +1,6 @@
 import { getDB } from '../config/database.js';
 import { createAuthHttpError } from '../config/jwt.js';
+import { buildPaginationMeta, toIsoOrNull } from '../utils/service-helpers.js';
 import { buildObjectIdOrStringFilter, escapeRegex } from '../utils/validation.js';
 
 const VALID_ROLES = new Set(['customer', 'vendor', 'admin']);
@@ -22,14 +23,6 @@ export const SAFE_USER_PROJECTION = Object.freeze({
   updatedAt: 1,
 });
 
-function toIsoStringOrNull(value) {
-  if (!value) {
-    return null;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 export function serializeUser(doc) {
   const normalizedRole =
     typeof doc.role === 'string' && VALID_ROLES.has(doc.role.trim().toLowerCase())
@@ -47,10 +40,10 @@ export function serializeUser(doc) {
     contactPhone: typeof doc.contactPhone === 'string' ? doc.contactPhone : '',
     deliveryAddress: typeof doc.deliveryAddress === 'string' ? doc.deliveryAddress : '',
     subscriptionPlan: doc.subscriptionPlan === 'premium' ? 'premium' : 'free',
-    subscriptionExpiresAt: toIsoStringOrNull(doc.subscriptionExpiresAt),
+    subscriptionExpiresAt: toIsoOrNull(doc.subscriptionExpiresAt),
     emailVerified: doc.emailVerified === true,
-    createdAt: toIsoStringOrNull(doc.createdAt),
-    updatedAt: toIsoStringOrNull(doc.updatedAt),
+    createdAt: toIsoOrNull(doc.createdAt),
+    updatedAt: toIsoOrNull(doc.updatedAt),
   };
 }
 
@@ -126,34 +119,28 @@ export async function listAdminUsers({ search, role, status, page, limit }, db =
   }
 
   const skip = (page - 1) * limit;
+  const hasFilter = Boolean(role !== 'all' || status !== 'all' || search);
 
-  const [docs, filteredTotal, total, blocked, customers, vendors, admins] = await Promise.all([
+  const [docs, total, blocked, customers, vendors, admins, filteredCount] = await Promise.all([
     usersCollection
       .find(filter, { projection: SAFE_USER_PROJECTION })
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .toArray(),
-    usersCollection.countDocuments(filter),
     usersCollection.countDocuments({}),
     usersCollection.countDocuments({ isBlocked: true }),
     usersCollection.countDocuments({ role: 'customer' }),
     usersCollection.countDocuments({ role: 'vendor' }),
     usersCollection.countDocuments({ role: 'admin' }),
+    hasFilter ? usersCollection.countDocuments(filter) : Promise.resolve(null),
   ]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredTotal / limit));
+  const filteredTotal = hasFilter ? filteredCount : total;
 
   return {
     users: docs.map(serializeUser),
-    pagination: {
-      page,
-      limit,
-      total: filteredTotal,
-      totalPages,
-      hasNextPage: page < totalPages,
-      hasPrevPage: page > 1,
-    },
+    pagination: buildPaginationMeta({ page, limit, total: filteredTotal }),
     counts: {
       total,
       active: Math.max(0, total - blocked),

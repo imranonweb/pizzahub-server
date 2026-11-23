@@ -1,5 +1,6 @@
-import { ensureDBConnected, getDB } from '../config/database.js';
+import { getDB } from '../config/database.js';
 import { verifyStripeWebhookSignature } from '../config/stripe.js';
+import { resolveControllerDatabase } from '../utils/service-helpers.js';
 import {
   createVendorCheckoutSession,
   createVendorPortalSession,
@@ -75,7 +76,7 @@ export function createSubscriptionController({
         stripeClient,
       });
 
-      const db = getDatabase === getDB ? await ensureDBConnected() : await getDatabase();
+      const db = await resolveControllerDatabase(getDatabase);
       const outcome = await processStripeWebhookEvent(event, {
         db,
       });
