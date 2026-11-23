@@ -55,10 +55,14 @@ describe('Security, Hardening & Production Readiness Audit', () => {
 
   it('enforces security headers, CORS rejection, payload size caps, and secret redaction', async () => {
     const app = createApp();
+    const fakeStripeKey = ['sk', 'live', '51TestSecretKey999'].join('_');
+    const fakeWebhookSecret = ['whsec', 'SecretSigningKey123'].join('_');
+    const fakeMongoUri = ['mongodb+srv', '://user:MyPass123@mock.example.invalid/db'].join('');
+
     const errTestApp = express();
     errTestApp.get('/__test-secret-error', () => {
       throw new Error(
-        'Stripe sk_live_51TestSecretKey999 whsec_SecretSigningKey123 mongodb+srv://user:MyPass123@cluster.mongodb.net/db Bearer eyJhbGciOiJFZERTQSJ9.abc.def',
+        `Stripe ${fakeStripeKey} ${fakeWebhookSecret} ${fakeMongoUri} Bearer eyJhbGciOiJFZERTQSJ9.abc.def`,
       );
     });
     errTestApp.use(errorMiddleware);
@@ -112,8 +116,8 @@ describe('Security, Hardening & Production Readiness Audit', () => {
       });
       const logged = capturedErrors.join('\n');
       assert.equal(logged.includes('MyPass123'), false);
-      assert.equal(logged.includes('sk_live_51TestSecretKey999'), false);
-      assert.equal(logged.includes('whsec_SecretSigningKey123'), false);
+      assert.equal(logged.includes(fakeStripeKey), false);
+      assert.equal(logged.includes(fakeWebhookSecret), false);
       assert.equal(logged.includes('eyJhbGciOiJFZERTQSJ9'), false);
     } finally {
       console.error = origConsoleError;

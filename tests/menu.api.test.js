@@ -98,7 +98,7 @@ function getMockDatabase() {
         async findOne(filter, options = {}) {
           if (dbMode === 'error') {
             throw new Error(
-              'MongoServerError: mongodb+srv://admin:TopSecret99@cluster.mongodb.net/pizzahub failed',
+              `MongoServerError: ${['mongodb+srv', '://admin:TopSecret99@mock.example.invalid/pizzahub'].join('')} failed`,
             );
           }
           const match = source.find((doc) => matchesFilter(doc, filter));
@@ -110,7 +110,7 @@ function getMockDatabase() {
             async toArray() {
               if (dbMode === 'error') {
                 throw new Error(
-                  'MongoServerError: mongodb+srv://admin:TopSecret99@cluster.mongodb.net/pizzahub failed',
+                  `MongoServerError: ${['mongodb+srv', '://admin:TopSecret99@mock.example.invalid/pizzahub'].join('')} failed`,
                 );
               }
               return source

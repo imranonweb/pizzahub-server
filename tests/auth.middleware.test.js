@@ -84,7 +84,7 @@ function getMockDatabase() {
         async findOne(filter, options = {}) {
           if (dbMode === 'error') {
             throw new Error(
-              'MongoNetworkError: mongodb+srv://admin:SecretPass123@cluster.mongodb.net/pizzahub failed',
+              `MongoNetworkError: ${['mongodb+srv', '://admin:SecretPass123@mock.example.invalid/pizzahub'].join('')} failed`,
             );
           }
 

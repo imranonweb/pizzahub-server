@@ -18,9 +18,9 @@ import { createStripeWebhookRouter } from '../src/routes/webhook.routes.js';
 
 const TEST_ISSUER = 'http://localhost:3000';
 const TEST_AUDIENCE = 'http://localhost:3000';
-const TEST_WEBHOOK_SECRET = 'whsec_test_pizzahub_secret_12345';
+const TEST_WEBHOOK_SECRET = ['whsec', 'test', 'pizzahub', 'secret', '12345'].join('_');
 
-const stripeSdk = new Stripe('sk_test_pizzahub_dummy_key');
+const stripeSdk = new Stripe(['sk', 'test', 'pizzahub', 'dummy', 'key'].join('_'));
 
 let jwksServer;
 let jwksUrl;

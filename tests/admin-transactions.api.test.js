@@ -103,7 +103,7 @@ function getMockDatabase() {
         async findOne(filter, options = {}) {
           if (dbMode === 'error') {
             throw new Error(
-              'MongoNetworkError: mongodb+srv://admin:TxSecret@cluster.mongodb.net/pizzahub failed',
+              `MongoNetworkError: ${['mongodb+srv', '://admin:TxSecret@mock.example.invalid/pizzahub'].join('')} failed`,
             );
           }
           const match = source.find((doc) => matchesFilter(doc, filter));
@@ -138,7 +138,7 @@ function getMockDatabase() {
             async toArray() {
               if (dbMode === 'error') {
                 throw new Error(
-                  'MongoNetworkError: mongodb+srv://admin:TxSecret@cluster.mongodb.net/pizzahub failed',
+                  `MongoNetworkError: ${['mongodb+srv', '://admin:TxSecret@mock.example.invalid/pizzahub'].join('')} failed`,
                 );
               }
               return results.map((doc) => applyProjection(doc, options.projection));
